@@ -1,4 +1,4 @@
-# [Project Title]
+# California Electricity Demand and Weather Analytics
 
 End-to-end data engineering pipeline: ingestion, cleaning, PostgreSQL storage, data quality checks, Kestra orchestration, and a BI dashboard.
 
@@ -6,9 +6,34 @@ End-to-end data engineering pipeline: ingestion, cleaning, PostgreSQL storage, d
 
 ## Team
 
-| Name | ID | Role |
-|------|----|------|
-| TBD  | TBD | TBD |
+| Name | ID | Phase 1 Role |
+|------|----|--------------|
+| Hisham Wael Hosny | 692300279 | Dataset description & data dictionary |
+| Zeyad Mohamed | 692300066 | Docker setup (PostgreSQL, pgAdmin), GitHub repo & submission video |
+| Mohamed Mostafa | 692300110 | Architecture diagram |
+| Basel Tamer Fathy | 692300055 | Database table design (star schema) |
+| Fatma Shrief | 692300201 | Dataset selection, proposal lead, analytical questions (Q1-Q3) |
+
+## Dataset
+
+| | |
+|---|---|
+| Name | CAISO Hourly Demand + Population-Weighted Weather |
+| Source | https://www.kaggle.com/datasets/arimancy/caiso-hourly-demand-weather |
+| Publisher / License | Arimancy LLC / CC BY 4.0 |
+| Size | ~98,968 rows x 35 columns (hourly records) |
+| Period | July 2015 to October 2026 |
+| Format | Parquet and CSV |
+| Demand source | EIA-930 hourly grid data (cleaned by Catalyst Cooperative / PUDL) plus a short recent tail from the EIA API. CAISO covers roughly 80% of California load. |
+| Weather source | ERA5 reanalysis (via Open-Meteo) at 7 cities (Los Angeles, Riverside, San Diego, San Francisco, San Jose, Sacramento, Fresno), combined using Census population weights. |
+
+The full data dictionary is in `docs/`.
+
+## Analytical Questions
+
+1. **Temperature effect:** How does temperature affect hourly electricity demand? At what temperature does demand start to go up fast?
+2. **Solar and the daily load shape:** How has the midday dip in demand changed from 2015 to 2026 in each season? How do sunshine and cloud cover relate to it?
+3. **Calendar and cities:** How do the hour of the day, weekends, and holidays affect peak demand? Which of the 7 cities' temperatures explains demand best?
 
 ## Architecture (planned)
 
@@ -17,6 +42,20 @@ End-to-end data engineering pipeline: ingestion, cleaning, PostgreSQL storage, d
 ```
 
 The full diagram is in `docs/`. Only components that are actually implemented are listed as done in the phase table below.
+
+## Planned Database Tables
+
+The raw CSV is first loaded as-is into a staging table, then SQL (orchestrated by Kestra) splits it into a star schema.
+
+| Table | Type | Description |
+|-------|------|-------------|
+| `raw_caiso_hourly` | Staging | All 35 original CSV columns, untouched raw copy |
+| `dim_datetime` | Dimension | Timestamps, year, month, day of week, hour, season, weekend / DST flags |
+| `dim_holiday` | Dimension | Statutory and observed holiday flags (federal and CA) |
+| `dim_city` | Dimension | City name and population weight (7 cities) |
+| `fact_demand` | Fact | Demand values, imputation code and flags, demand source |
+| `fact_city_temperature` | Fact | Temperature per city per hour (reshaped wide to long) |
+| `fact_weather_weighted` | Fact | Population-weighted temperature, radiation, cloud cover, HDH/CDH, HDD/CDD, quality flags |
 
 ## Prerequisites
 
@@ -76,7 +115,7 @@ Note: database credentials are applied only the first time the volume is created
 
 ```
 ├── docs/                # Proposal, architecture diagrams, data dictionary
-├── scripts/             # Extraction and cleaning code
+├── scripts/             # Extraction, cleaning, and ingestion code (Python)
 ├── sql/                 # Table schemas (DDL), quality checks, views
 ├── flows/               # Kestra YAML orchestration flows
 ├── docker-compose.yml
