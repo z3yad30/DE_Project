@@ -1,0 +1,32 @@
+# Secrets: never commit real credentials
+.env
+*.env
+!.env.example
+
+# Data files (raw and processed data stay out of Git)
+data/
+*.csv
+*.parquet
+*.zip
+*.json.gz
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# Docker volumes and local DB files
+pgdata/
+pgadmin_data/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
