@@ -77,18 +77,36 @@ def fetch_source(raw_dir: str) -> SourceResult:
                 timeout=(10, 300)
             )
 
-            logger.info("Kaggle HTTP status: %s", response.status_code)
+            logger.info(
+                "Kaggle HTTP status: %s",
+                response.status_code
+            )
 
             response.raise_for_status()
             break
 
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.HTTPError as exc:
             status = response.status_code
             response.close()
 
             # Authentication and dataset errors are not retryable
-            if status in (401, 403, 404):
-                raise
+            if status == 401:
+                raise RuntimeError(
+                    "Kaggle rejected credentials (401). "
+                    "Check KAGGLE_USERNAME / KAGGLE_KEY"
+                ) from exc
+
+            if status == 403:
+                raise RuntimeError(
+                    "Kaggle access forbidden (403). "
+                    "Check your dataset access permissions."
+                ) from exc
+
+            if status == 404:
+                raise RuntimeError(
+                    "Kaggle dataset not found (404). "
+                    "Check KAGGLE_DATASET."
+                ) from exc
 
             # Retry only server errors (5xx)
             if status < 500 or attempt == max_retries:
@@ -115,7 +133,6 @@ def fetch_source(raw_dir: str) -> SourceResult:
     raw_path.mkdir(parents=True, exist_ok=True)
 
     temp_zip_path = None
-    output_path = None
 
     try:
         # Download ZIP file to a temporary location
@@ -126,7 +143,9 @@ def fetch_source(raw_dir: str) -> SourceResult:
 
             temp_zip_path = Path(temp_zip.name)
 
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
+            for chunk in response.iter_content(
+                chunk_size=1024 * 1024
+            ):
                 if chunk:
                     temp_zip.write(chunk)
 
@@ -135,34 +154,47 @@ def fetch_source(raw_dir: str) -> SourceResult:
 
         logger.info("Dataset ZIP downloaded successfully")
 
-        # Find the CSV file inside the ZIP
-        with zipfile.ZipFile(temp_zip_path, "r") as archive:
+        try:
+            # Find the CSV file inside the ZIP
+            with zipfile.ZipFile(temp_zip_path, "r") as archive:
 
-            csv_files = [
-                name for name in archive.namelist()
-                if name.lower().endswith(".csv")
-            ]
+                csv_files = [
+                    name for name in archive.namelist()
+                    if name.lower().endswith(".csv")
+                ]
 
-            if len(csv_files) != 1:
-                raise ValueError(
-                    f"Expected exactly one CSV file, found {len(csv_files)}"
+                if len(csv_files) != 1:
+                    raise ValueError(
+                        f"Expected exactly one CSV file, "
+                        f"found {len(csv_files)}"
+                    )
+
+                csv_name = csv_files[0]
+
+                # Create timestamped output filename
+                timestamp = datetime.now(timezone.utc).strftime(
+                    "%Y%m%dT%H%M%SZ"
                 )
 
-            csv_name = csv_files[0]
+                output_path = (
+                    raw_path / f"caiso_hourly_{timestamp}.csv"
+                )
 
-            # Create timestamped output filename
-            timestamp = datetime.now(timezone.utc).strftime(
-                "%Y%m%dT%H%M%SZ"
-            )
+                # Extract CSV without modifying its contents
+                with archive.open(csv_name, "r") as source:
+                    with output_path.open("wb") as destination:
+                        shutil.copyfileobj(source, destination)
 
-            output_path = raw_path / f"caiso_hourly_{timestamp}.csv"
+        except zipfile.BadZipFile as exc:
+            raise RuntimeError(
+                "Response was not a ZIP file; "
+                "check credentials/dataset slug"
+            ) from exc
 
-            # Extract CSV without modifying its contents
-            with archive.open(csv_name, "r") as source:
-                with output_path.open("wb") as destination:
-                    shutil.copyfileobj(source, destination)
-
-        logger.info("CSV extracted successfully: %s", output_path)
+        logger.info(
+            "CSV extracted successfully: %s",
+            output_path
+        )
 
         # Calculate SHA-256 checksum
         sha256_hash = hashlib.sha256()
@@ -201,6 +233,16 @@ def fetch_source(raw_dir: str) -> SourceResult:
 
 
 if __name__ == "__main__":
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format=(
+            "%(asctime)s | %(levelname)s | "
+            "%(name)s | %(message)s"
+        )
+    )
+
     raw_dir = os.environ["RAW_DIR"]
 
     result = fetch_source(raw_dir)
