@@ -4,7 +4,6 @@ import csv
 import sys
 import uuid
 import time
-import logging
 from datetime import datetime, timezone
 
 from logging_config import get_logger
@@ -19,6 +18,16 @@ from load_raw import (
 logger = get_logger("ingest")
 
 RAW_DIR = os.environ.get("RAW_DIR", "data/raw")
+
+
+def get_http_status(error):
+    for candidate in (error, error.__cause__):
+        response = getattr(candidate, "response", None)
+        if response is not None:
+            status_code = getattr(response, "status_code", None)
+            if status_code is not None:
+                return status_code
+    return None
 
 
 def count_csv_rows(csv_path):
@@ -52,7 +61,7 @@ def main():
         # 2. Download and save the raw dataset
         result = fetch_source(RAW_DIR)
 
-        source_file = result.path
+        source_file = os.path.basename(result.path)
         sha256 = result.sha256
         http_status = result.http_status
 
@@ -85,6 +94,8 @@ def main():
         status = "FAILED"
         exit_code = 1
         error_message = str(error)
+        if http_status is None:
+            http_status = get_http_status(error)
         logger.exception("Ingestion failed")
 
     finally:
