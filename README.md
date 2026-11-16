@@ -186,6 +186,3 @@ Note: database credentials are applied only the first time the volume is created
 
 Credentials live only in `.env`, which is git-ignored. Never commit passwords or tokens. `.env.example` contains placeholder values only.
 
-## AI Usage Disclosure
-
-[The team fills this in honestly: which parts were created with AI assistance, and confirmation that every member understands and can explain them.]
