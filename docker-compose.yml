@@ -14,6 +14,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       retries: 5
+    networks:
+      - pipeline_net
 
   pgadmin:
     image: dpage/pgadmin4
@@ -28,7 +30,37 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - pipeline_net
+
+  ingest:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    container_name: ingest
+    # Keep ingestion out of the default `docker compose up` startup.
+    profiles: ["ingest"]
+    env_file: .env
+    environment:
+      # Use the Compose service name to reach PostgreSQL, not localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      RAW_DIR: /data/raw
+    # Persist downloaded raw data in the repository's data/raw directory.
+    volumes:
+      - ./data/raw:/data/raw
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    restart: "no"
+    # TEMP: ingest.py does not exist yet; remove this line when scripts/ingest.py is merged so the Dockerfile CMD is used
+    command: ["python", "scripts/extract.py"]
 
 volumes:
   pgdata:
   pgadmin_data:
+
+networks:
+  pipeline_net:
