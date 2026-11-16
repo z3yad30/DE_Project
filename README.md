@@ -177,6 +177,25 @@ Note: database credentials are applied only the first time the volume is created
 <!-- MOHAMED:END -->
 ### Raw storage
 <!-- BASEL:START -->
+The raw layer stores each CSV row as received, without cleaning, casting, trimming, deduplicating, or reordering. Source columns are `TEXT` so PostgreSQL does not reinterpret or alter the CSV values; transformations belong in later phases.
+
+The schema is `raw_data`. It contains `raw_data.raw_caiso_hourly` for the CSV rows and `raw_data.ingestion_log` for ingestion traceability.
+
+| Metadata column | Purpose |
+|---|---|
+| `_batch_id` | Identifies the ingestion batch |
+| `_source_file` | Records the source CSV filename |
+| `_ingested_at` | Records when the row was loaded |
+
+Every load appends a new batch. Duplicate handling is planned for Phase 5.
+
+Set `POSTGRES_USER` and `POSTGRES_DB` in your shell to the corresponding values from `.env`, then run the proof queries from the repository root:
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/02_raw_proof.sql
+```
+
+In pgAdmin, open **Servers → your registered server → Databases → your database → Schemas → raw_data → Tables** to inspect `raw_caiso_hourly` and `ingestion_log`.
 <!-- BASEL:END -->
 ### Data profiling
 <!-- HISHAM:START -->
