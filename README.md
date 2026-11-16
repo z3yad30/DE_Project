@@ -2,160 +2,190 @@
 
 End-to-end data engineering pipeline: ingestion, cleaning, PostgreSQL storage, data quality checks, Kestra orchestration, and a BI dashboard.
 
+> **Project status:** Phase 1 is complete and Phase 2 is in progress. See the [Roadmap](#roadmap).
+
 ## Team
 
-| Name | ID |
-|------|----|
-| Hisham Wael Hosny | 692300279 |
-| Zeyad Mohamed | 692300066 |
-| Mohamed Mostafa | 692300110 |
-| Basel Tamer Fathy | 692300055 |
-| Fatma Shrief | 692300201 |
+| Name | ID | Phase 1 Role | Phase 2 Role |
+|------|----|--------------|---------------|
+| Hisham Wael Hosny | 692300279 | Dataset description & data dictionary | Raw data profiling and notes |
+| Zeyad Mohamed | 692300066 | Docker setup (PostgreSQL, pgAdmin), GitHub repo & submission video | Docker, Compose, integration |
+| Mohamed Mostafa | 692300110 | Architecture diagram | Logging, ingest entry point, architecture diagram |
+| Basel Tamer Fathy | 692300055 | Database table design (star schema) | Raw schema and loader |
+| Fatma Shrief | 692300201 | Dataset selection, proposal lead, analytical questions (Q1-Q3) | Kaggle extraction (`scripts/extract.py`) |
 
-## Running the Extraction Script
+## Dataset
 
-This project includes a Python extraction script that downloads the CAISO Hourly Demand + Weather dataset from Kaggle and extracts the CSV file into the local raw data directory.
+| | |
+|---|---|
+| Name | CAISO Hourly Demand + Population-Weighted Weather |
+| Source | https://www.kaggle.com/datasets/arimancy/caiso-hourly-demand-weather |
+| Publisher / License | Arimancy LLC / CC BY 4.0 |
+| Size | ~98,968 rows x 35 columns (hourly records) |
+| Period | July 2015 to October 2026 |
+| Format | Parquet and CSV |
+| Demand source | EIA-930 hourly grid data (cleaned by Catalyst Cooperative / PUDL) plus a short recent tail from the EIA API. CAISO covers roughly 80% of California load. |
+| Weather source | ERA5 reanalysis (via Open-Meteo) at 7 cities (Los Angeles, Riverside, San Diego, San Francisco, San Jose, Sacramento, Fresno), combined using Census population weights. |
 
-### 1. Prerequisites
+The full data dictionary is in `docs/`.
 
-Before running the extraction script, make sure you have:
+## Analytical Questions
 
-- Python 3.11 or later
+1. **Temperature effect:** How does temperature affect hourly electricity demand? At what temperature does demand start to go up fast?
+2. **Solar and the daily load shape:** How has the midday dip in demand changed from 2015 to 2026 in each season? How do sunshine and cloud cover relate to it?
+3. **Calendar and cities:** How do the hour of the day, weekends, and holidays affect peak demand? Which of the 7 cities' temperatures explains demand best?
+
+## Architecture (planned)
+
+```
+[Source] -> [Python Ingestion] -> [PostgreSQL] -> [Kestra Orchestrator] -> [Dashboard]
+```
+
+The full diagram is in `docs/`. Only components that are actually implemented are listed as done in the phase table below.
+
+## Planned Database Tables
+
+The raw CSV is intended to be loaded as-is into a staging table, then SQL (orchestrated by Kestra) can split it into a star schema.
+
+| Table | Type | Description |
+|-------|------|-------------|
+| `raw_caiso_hourly` | Staging | All 35 original CSV columns, untouched raw copy |
+| `dim_datetime` | Dimension | Timestamps, year, month, day of week, hour, season, weekend / DST flags |
+| `dim_holiday` | Dimension | Statutory and observed holiday flags (federal and CA) |
+| `dim_city` | Dimension | City name and population weight (7 cities) |
+| `fact_demand` | Fact | Demand values, imputation code and flags, demand source |
+| `fact_city_temperature` | Fact | Temperature per city per hour (reshaped wide to long) |
+| `fact_weather_weighted` | Fact | Population-weighted temperature, radiation, cloud cover, HDH/CDH, HDD/CDD, quality flags |
+
+## Prerequisites
+
+- Docker Desktop (with the WSL 2 backend on Windows) or Docker Engine + Compose v2
 - Git
-- A Kaggle account with access to the dataset
 
-### 2. Clone the Repository
+No local Python installation or virtual environment is needed.
 
-```bash
-git clone <repo-url>
-cd <repo-folder>
-```
-
-### 3. Create and Activate a Virtual Environment
-
-**Linux / WSL:**
+Check your Docker setup:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+docker --version
+docker compose version
 ```
 
-**Windows PowerShell:**
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-### 4. Install Dependencies
-
-The extraction script requires the `requests` package.
+## Quick Start
 
 ```bash
-python -m pip install requests
-```
-
-### 5. Configure Kaggle Credentials
-
-Create your local environment file:
-
-```bash
+git clone https://github.com/z3yad30/DE_Project.git
+cd DE_Project
 cp .env.example .env
 ```
 
-Open `.env` and fill in your Kaggle credentials:
-
-```env
-KAGGLE_USERNAME=your_kaggle_username
-KAGGLE_KEY=your_kaggle_api_key
-KAGGLE_DATASET=arimancy/caiso-hourly-demand-weather
-
-MAX_RETRIES=3
-RAW_DIR=data/raw
-```
-
-**Where can you get your Kaggle credentials?**
-
-1. Log in to your Kaggle account.
-2. Open your account settings.
-3. Navigate to the API section.
-4. Generate an API token and obtain the credentials required by this project.
-5. Add them to your local `.env` file.
-
-**Important:**
-- Never commit `.env` or share your Kaggle credentials.
-- `.env` is already included in `.gitignore`.
-- Keep `.env.example` as a template with placeholder values.
-
-### 6. Load Environment Variables
-
-The extraction script reads configuration from environment variables. It does not automatically load `.env`, so export the variables before running it.
-
-**Linux / WSL:**
+Edit `.env` and fill in `KAGGLE_USERNAME` and `KAGGLE_KEY`. Find both in your Kaggle account under **Settings -> API**; create an API token if needed. Keep these credentials private.
 
 ```bash
-set -a
-source .env
-set +a
+docker compose up -d
+docker compose ps
+docker compose run --rm ingest
 ```
 
-If you encounter a `command not found` error or see `%0D` at the end of the Kaggle request URL, your `.env` file may have Windows line endings. Fix them using:
+The downloaded CSV appears in `./data/raw/`. This directory is git-ignored.
+
+## How dependencies work (no virtualenv)
+
+The Docker image installs dependencies from `scripts/requirements.txt` at build time. To add a package, add it to that file and rebuild the image:
 
 ```bash
-sed -i 's/\r$//' .env
+docker compose build ingest
 ```
 
-Then load the environment variables again.
+Code changes also require rebuilding the image with `docker compose build ingest`, or run the service with `docker compose run --rm --build ingest`.
 
-**Windows PowerShell:**
+## Services
 
-```powershell
-Get-Content .env | ForEach-Object {
-    if ($_ -match '^\s*([^#][^=]*)=(.*)$') {
-        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
-    }
-}
-```
+| Service | Image | URL / Port | How it runs |
+|---------|-------|------------|-------------|
+| postgres | postgres:16 | `localhost:5432` | Started by `docker compose up -d` |
+| pgadmin | dpage/pgadmin4 | http://localhost:8080 | Started by `docker compose up -d` |
+| ingest | `scripts/Dockerfile` | On demand | Profile `ingest`; run with `docker compose run --rm ingest` |
 
-### 7. Run the Extraction Script
+The `ingest` profile keeps the service out of the default `docker compose up -d` startup. PostgreSQL data is stored in the named volume `pgdata`, so it persists when containers are stopped.
 
-From the repository root, execute:
+## Notes for Windows / WSL
+
+Run Docker commands from the repository folder inside WSL. Files created by the container in `data/raw` may be owned by root; fix ownership with:
 
 ```bash
-python scripts/extract.py
+sudo chown -R $USER data
 ```
 
-The script will:
+## Connecting pgAdmin to PostgreSQL
 
-1. Connect to the Kaggle dataset API.
-2. Download the dataset archive.
-3. Extract the CSV file.
-4. Calculate its SHA-256 checksum and file size.
-5. Save the extracted file in `data/raw/`.
+1. Open http://localhost:8080 and log in with `PGADMIN_EMAIL` / `PGADMIN_PASSWORD` from your `.env`.
+2. Right-click **Servers** -> **Register** -> **Server**.
+3. **General -> Name:** any name (e.g. `pipeline`).
+4. **Connection:**
+   - Host: `postgres` (the service name, **not** `localhost`, because pgAdmin runs inside a container)
+   - Port: `5432`
+   - Maintenance database: value of `POSTGRES_DB`
+   - Username / Password: `POSTGRES_USER` / `POSTGRES_PASSWORD`
+5. Save. The database should appear under **Databases**.
 
-### 8. Verify the Output
-
-After successful execution, check the raw data directory:
+## Useful Commands
 
 ```bash
-ls -lh data/raw/
+docker compose logs -f postgres   # follow Postgres logs
+docker compose down               # stop containers, keep data
+docker compose down -v            # stop containers AND delete the data volume
+docker compose run --rm ingest    # run ingestion on demand
+docker compose build ingest       # build the ingestion image
 ```
 
-You should find a CSV file with a name similar to:
+Note: database credentials are applied only the first time the volume is created. If you change them in `.env` later, run `docker compose down -v` first.
 
-```text
-caiso_hourly_<timestamp>.csv
+## Project Structure
+
+```
+├── data/
+│   └── raw/                      # Downloaded raw CSV files (git-ignored)
+├── docs/                         # Proposal, architecture diagrams, data dictionary
+├── scripts/
+│   ├── Dockerfile
+│   ├── extract.py
+│   └── requirements.txt
+├── sql/                          # Table schemas (DDL), quality checks, views
+├── flows/                        # Kestra YAML orchestration flows
+├── .dockerignore
+├── docker-compose.yml
+├── .env.example
+└── README.md
 ```
 
-The timestamp is generated automatically during extraction.
+## Roadmap
 
-### Troubleshooting
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | Proposal, dataset choice, Docker + PostgreSQL + pgAdmin | Done |
+| 2 | Ingestion and raw storage | In progress |
+| 3 | Cleaning, star schema, SQL views | Not started |
+| 4 | Data quality checks | Not started |
+| 5 | Kestra orchestration, idempotency | Not started |
+| 6 | Dashboard, documentation, demo | Not started |
 
-| Error | Possible Cause | Solution |
-|---|---|---|
-| Missing Kaggle credentials | Environment variables are not loaded | Re-run the environment loading commands |
-| HTTP 403 | Invalid credentials, insufficient dataset access, or malformed request URL | Check Kaggle credentials, dataset access, and `.env` formatting |
-| HTTP 404 | Incorrect dataset identifier | Verify `KAGGLE_DATASET` |
-| Connection timeout | Network or Kaggle API connectivity issue | Check your internet connection and retry |
-| `command not found` when sourcing `.env` | Possible Windows line endings or malformed `.env` entries | Run `sed -i 's/\r$//' .env` |
+## Phase 2: Ingestion and Raw Storage
 
+### Ingestion script
+<!-- MOHAMED:START -->
+<!-- MOHAMED:END -->
+### Raw storage
+<!-- BASEL:START -->
+<!-- BASEL:END -->
+### Data profiling
+<!-- HISHAM:START -->
+<!-- HISHAM:END -->
+
+## Security
+
+Credentials live only in `.env`, which is git-ignored. Never commit passwords or tokens. `.env.example` contains placeholder values only.
+
+## AI Usage Disclosure
+
+[The team fills this in honestly: which parts were created with AI assistance, and confirmation that every member understands and can explain them.]
