@@ -55,8 +55,6 @@ services:
     networks:
       - pipeline_net
     restart: "no"
-    # TEMP: ingest.py does not exist yet; remove this line when scripts/ingest.py is merged so the Dockerfile CMD is used
-    command: ["python", "scripts/extract.py"]
 
 volumes:
   pgdata:
