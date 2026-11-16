@@ -21,7 +21,6 @@ This project downloads the CAISO hourly demand and population-weighted weather d
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 - [Security](#security)
-- [AI Usage Disclosure](#ai-usage-disclosure)
 
 ## Team
 
@@ -441,6 +440,3 @@ See the [Phase 2 notes](docs/phase2_notes.md) for the findings summary and [deta
 
 Credentials belong only in the local `.env`, which is git-ignored. Never commit passwords or Kaggle tokens. `.env.example` contains placeholders rather than live credentials.
 
-## AI Usage Disclosure
-
-[The team fills this in honestly: which parts were created with AI assistance, which tools were used, and confirmation that every member understands and can explain them.]
