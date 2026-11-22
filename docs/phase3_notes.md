@@ -53,3 +53,13 @@ The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diag
   1       | Los Angeles   | 0.6147983765193046      | 4
   ```
   The real view contains 7 city rows. Fresno has rank 1.
+
+### Cleaning summary and counts (Hisham)
+- Raw rows: 98,968 | Clean rows: 98,968 | Removed: 0 (based on the latest SUCCESS batch in raw_data.ingestion_log and full-refresh rebuilds).
+- All 35 raw columns start as TEXT: trim spaces, convert empty strings to NULL, and cast strictly to target types (UTC timestamp, local timestamp, numbers, booleans) so bad values fail early.
+- Kept NULLs as-is without guessing or imputing:
+  - demand_imputed_pudl_mwh_imputation_code: 98,397 missing (99.423%)
+  - demand_imputed_pudl_mwh: 928 missing (0.938%)
+  - demand_reported_mwh: 426 missing (0.430%)
+  - hdd_65_daily and cdd_65_daily: 40 missing each (0.040%)
+- Deduplication checks datetime_utc (0 exact duplicates removed; conflicting rows fail). Partial boundary/DST day counts and local hour are kept as-is, and the 14 MWh minimum in demand_reported_mwh is noted as an observation rather than dropped automatically.
