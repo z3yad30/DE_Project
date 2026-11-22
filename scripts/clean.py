@@ -1,4 +1,6 @@
 
+import argparse
+
 import pandas as pd
 
 from dataclasses import dataclass, field
@@ -18,6 +20,41 @@ class CleanStats:
 
 
 logger = get_logger("clean")
+
+
+def log_stats(stats):
+    """Log cleaning counts and null percentages for the report and container logs."""
+
+    logger.info(
+        "Rows before/after: %s -> %s; exact duplicates removed: %s",
+        stats.rows_before,
+        stats.rows_after,
+        stats.exact_duplicates_removed,
+    )
+
+    for phase, counts in (
+        ("before", stats.null_counts_before),
+        ("after", stats.null_counts_after),
+    ):
+        denominator = (
+            stats.rows_before if phase == "before" else stats.rows_after
+        )
+        null_columns = {
+            column: count
+            for column, count in counts.items()
+            if count > 0
+        }
+        for column, count in null_columns.items():
+            percentage = (
+                count / denominator * 100 if denominator else 0.0
+            )
+            logger.info(
+                "Null counts %s: %s=%s (%.3f%%)",
+                phase,
+                column,
+                count,
+                percentage,
+            )
 
 
 def select_source_batch(conn):
@@ -54,11 +91,12 @@ def read_raw_batch(conn, batch_id):
         ORDER BY datetime_utc;
     """
 
-    df = pd.read_sql_query(
-        query,
-        conn,
-        params=(batch_id,)
-    )
+    with conn.cursor() as cursor:
+        cursor.execute(query, (batch_id,))
+        column_names = [description.name for description in cursor.description]
+        rows = cursor.fetchall()
+
+    df = pd.DataFrame(rows, columns=column_names)
 
     if df.empty:
         raise ValueError(
@@ -80,7 +118,8 @@ def clean_dataframe(df):
     df = df.copy()
 
     # 1. Trim whitespace and convert empty strings to missing values
-    for col in df.select_dtypes(include="object").columns:
+    text_dtypes = df.select_dtypes(include=["object", "string"]).columns
+    for col in text_dtypes:
         df[col] = df[col].str.strip()
         df[col] = df[col].replace("", pd.NA)
 
@@ -92,6 +131,8 @@ def clean_dataframe(df):
     )
 
     # Convert UTC timestamps to California local wall-clock time
+    # The source strings include explicit -07:00/-08:00 offsets. Parse them
+    # as UTC-aware timestamps first, then convert to California local wall time.
     df["datetime_local"] = (
         pd.to_datetime(
             df["datetime_local"],
@@ -101,6 +142,32 @@ def clean_dataframe(df):
         .dt.tz_convert("America/Los_Angeles")
         .dt.tz_localize(None)
     )
+
+    if not df.empty:
+        local_hour_matches = (
+            df["datetime_local"].dt.hour
+            == df["hour"].astype("Int64")
+        )
+        if not local_hour_matches.all():
+            mismatch_count = int((~local_hour_matches).sum())
+            raise ValueError(
+                "datetime_local hour mismatch: "
+                f"{mismatch_count} rows differ from the hour column."
+            )
+
+        utc_naive = df["datetime_utc"].dt.tz_convert(None)
+        offset_hours = (
+            (df["datetime_local"] - utc_naive).dt.total_seconds() / 3600
+        )
+        invalid_offsets = ~offset_hours.isin([-8.0, -7.0])
+        if invalid_offsets.any():
+            examples = sorted(
+                set(offset_hours.loc[invalid_offsets].dropna().tolist())
+            )
+            raise ValueError(
+                "datetime_local UTC offset mismatch; expected -8 or -7 hours, "
+                f"found: {examples}"
+            )
 
     df["_ingested_at"] = pd.to_datetime(
         df["_ingested_at"],
@@ -164,11 +231,11 @@ def clean_dataframe(df):
     ]
 
     for col in boolean_cols:
-        normalized = df[col].astype("string").str.lower()
+        normalized = df[col].astype("string")
 
         invalid_values = (
             df[col].notna()
-            & ~normalized.isin(["true", "false"])
+            & ~normalized.isin(["True", "False"])
         )
 
         if invalid_values.any():
@@ -185,8 +252,8 @@ def clean_dataframe(df):
         df[col] = (
             normalized
             .map({
-                "true": True,
-                "false": False
+                "True": True,
+                "False": False
             })
             .astype("boolean")
         )
@@ -279,6 +346,7 @@ def clean_batch(conn):
         stats.rows_before,
         stats.rows_after
     )
+    log_stats(stats)
 
     return df, stats
 
@@ -489,12 +557,30 @@ def load_staging(conn, df):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Clean the latest successful CAISO ingestion batch."
+    )
+    parser.add_argument(
+        "--load",
+        action="store_true",
+        help="Load the cleaned frame into staging and commit the transaction.",
+    )
+    args = parser.parse_args()
+
     conn = None
 
     try:
         conn = connect()
 
         df, stats = clean_batch(conn)
+
+        if args.load:
+            loaded_rows = load_staging(conn, df)
+            conn.commit()
+            logger.info(
+                "Committed staging load with %s rows",
+                loaded_rows,
+            )
 
         print("\n========== CLEANING SUMMARY ==========")
         print(f"Rows before cleaning: {stats.rows_before}")
