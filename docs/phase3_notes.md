@@ -1,5 +1,3 @@
-<!-- Created as fallback for Hisham Wael Hosny; merge/replace if his PR lands. -->
-
 ## Schema: Basel
 
 ### Schema justification
@@ -26,65 +24,41 @@ The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diag
 
 ### Peak demand by local hour, weekend, and holiday
 
-- Joins: `dw.fact_demand` → `dw.dim_datetime` on `datetime_utc`; left-joins `dw.dim_holiday` on `dim_holiday.holiday_date = DATE(dim_datetime.datetime_local)`.
-- Keys: `fact_demand.datetime_utc` and `dim_datetime.datetime_utc` are the fact/dimension key; `dim_holiday.holiday_date` is the holiday date key.
-- JOIN justification: The datetime join assigns each demand value to its local hour/weekend attributes. The left join adds an optional holiday flag without dropping hours or demand rows that have no holiday match.
-- Real first rows:
-  ```text
-  local_hour | is_weekend | is_holiday | avg_demand_mwh       | max_demand_mwh
-  0          | false      | false      | 25447.097334662393   | 40644.0
-  0          | true       | false      | 25178.255122084940   | 37080.0
-  1          | false      | false      | 23955.706533973530   | 37350.0
-  1          | true       | false      | 23762.908364928987   | 34241.0
-  ```
-  The real view contains 24 distinct local hours and 48 hour/weekend/holiday groups.
+- Joins: `dw.fact_demand` → `dw.dim_datetime` on `datetime_id`, then `dw.dim_datetime` → `dw.dim_holiday` on `holiday_id`.
+- Keys: `dw.fact_demand.datetime_id` and `dw.dim_datetime.datetime_id` identify the hourly fact/dimension row; `dw.dim_datetime.holiday_id` references `dw.dim_holiday.holiday_id`.
+- JOIN justification: The inner joins assign each demand row to its local hour, weekend flag, and holiday flag combination through the warehouse keys. `dw.dim_holiday` has no `holiday_date` column, and `sql/08_views_q3.sql` uses no left join.
+- **Real first rows: NOT EXECUTED.** The view has not been run against PostgreSQL in this audit.
 
 ### City temperature-demand correlation
 
-- Joins: `dw.fact_city_temperature` → `dw.dim_city` on `city_id` and → `dw.fact_demand` on `datetime_utc`.
-- Keys: `(datetime_utc, city_id)` identifies a city temperature fact; `datetime_utc` connects it to demand.
-- JOIN justification: Both the city temperature and demand facts use `datetime_utc`, so joining on that key aligns each city's temperature with the corresponding hourly demand. The city dimension supplies the display name.
-- Real first rows:
-  ```text
-  city_id | city_name     | temperature_demand_corr | correlation_rank
-  7       | Fresno        | 0.6678662203009756      | 1
-  2       | Riverside     | 0.6438574194140775      | 2
-  6       | Sacramento    | 0.6410168506026087      | 3
-  1       | Los Angeles   | 0.6147983765193046      | 4
-  ```
-  The real view contains 7 city rows. Fresno has rank 1.
+- Joins: `dw.fact_city_temperature` → `dw.dim_city` on `city_id` and → `dw.fact_demand` on `datetime_id`.
+- Keys: `(datetime_id, city_id)` identifies a city temperature fact; `datetime_id` aligns that city temperature with the corresponding hourly demand.
+- JOIN justification: The two fact tables share the required hourly grain, and the city dimension supplies the city display name. The view groups on city and ranks absolute Pearson correlation.
+- **Real first rows: NOT EXECUTED.** The view has not been run against PostgreSQL in this audit.
 
 ### Cleaning decisions
 
-The profiling values below are from batch `48e7a1d23f5a`, as recorded in
+The profiling values below are from profiled batch `48e7a1d23f5a`, as recorded in
 [`phase2_profiling_details.md`](./phase2_profiling_details.md) (§§3.1–3.5).
-The cleaning-run row counts are from batch `phase3_hisham_audit`; the existing
-console capture records the selected batch and the `clean.py` before/after
-line in [`logs/preload_pass.log`](./logs/preload_pass.log:2). Cleaned NULL
-counts appear on lines 14–18, and the preserved flag counts on line 39.
+No cleaning-run console log or batch name is cited here.
 
 | Issue found in profiling | Decision | Before → after |
 |---|---|---|
-| 35 raw source columns are TEXT | Parse timestamps, numbers, booleans, and local calendar integers into typed values in clean staging; raw stays unchanged. | 35 TEXT source columns → typed values (profiling details §2; clean log line 5) |
-| Imputation-code NULLs | Keep NULLs; do not infer missing demand from the code field. | 98,397 NULLs → 98,397 NULLs (profiling details §3.2; clean log line 16) |
-| `demand_imputed_pudl_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 928 → 928 NULLs (profiling details §3.2; clean log line 15) |
-| `demand_reported_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 426 → 426 NULLs (profiling details §3.2; clean log line 14) |
-| `hdd_65_daily` / `cdd_65_daily` NULLs | Keep NULLs; do not impute in cleaning. | 40 / 40 → 40 / 40 NULLs (profiling details §3.2; clean log lines 17–18) |
+| 35 raw source columns are TEXT | Parse timestamps, numbers, booleans, and local calendar integers into typed values in clean staging; raw stays unchanged. | 35 TEXT source columns → typed values (profiling details §2) |
+| Imputation-code NULLs | Keep NULLs; do not infer missing demand from the code field. | 98,397 NULLs → 98,397 NULLs (profiling details §3.2) |
+| `demand_imputed_pudl_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 928 → 928 NULLs (profiling details §3.2) |
+| `demand_reported_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 426 → 426 NULLs (profiling details §3.2) |
+| `hdd_65_daily` / `cdd_65_daily` NULLs | Keep NULLs; do not impute in cleaning. | 40 / 40 → 40 / 40 NULLs (profiling details §3.2) |
 | `hour` differs from the UTC clock but matches local clock | Treat `hour` as local hour; use UTC timestamp as the stable time key. | 98,968 UTC-hour mismatches; 0 local-hour mismatches (profiling details §3.1) |
 | `demand_reported_mwh` has a low minimum | Keep the 14 MWh observation and flag it for investigation; do not filter it. | 14 MWh vs. 14,372 MWh minimum in other demand fields (profiling details §3.5) |
-| Duplicate UTC timestamps | Reject conflicting duplicate keys; no duplicate timestamp groups were profiled, and no exact duplicates were removed in the cited clean run. | 0 duplicate groups; 0 removed (profiling details §3.1; `preload_pass.log`, clean.py line 8) |
+| Duplicate UTC timestamps | Reject conflicting duplicate keys; no duplicate timestamp groups were profiled. | 0 duplicate groups (profiling details §3.1) |
 | Partial first/last local dates and DST-length dates | Preserve source coverage; do not pad partial or 23/25-hour dates. | Edge dates: 23 and 17 rows; DST dates: 11 with 23 and 11 with 25 rows (profiling details §3.4) |
-| Imputation and preliminary-weather flags | Preserve flags as metadata; do not treat them as failures or impute them away. | 571 imputed-demand flags; 1,947 preliminary-weather flags (profiling details §3.5; clean log line 39) |
+| Imputation and preliminary-weather flags | Preserve flags as metadata; do not treat them as failures or impute them away. | 571 imputed-demand flags; 1,947 preliminary-weather flags (profiling details §3.5) |
 
 #### Before/after row counts
 
-| Batch | Raw batch rows | Clean rows | Removed |
-|---|---:|---:|---:|
-| `phase3_hisham_audit` | 98,968 | 98,968 | 0 |
-
-The row counts and zero-removal result come from `clean.py` output for the
-selected batch (`preload_pass.log`, lines 2 and 7–8). These are a saved
-pre-existing console capture, not a run performed during this audit.
+**NOT EXECUTED.** The Phase 3 cleaning pipeline was not run during this audit,
+so no cleaned row count or batch-specific before/after result is claimed here.
 
 ### Q2 views and JOIN justification
 
