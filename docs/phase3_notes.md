@@ -54,12 +54,83 @@ The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diag
   ```
   The real view contains 7 city rows. Fresno has rank 1.
 
-### Cleaning summary and counts (Hisham)
-- Raw rows: 98,968 | Clean rows: 98,968 | Removed: 0 (based on the latest SUCCESS batch in raw_data.ingestion_log and full-refresh rebuilds).
-- All 35 raw columns start as TEXT: trim spaces, convert empty strings to NULL, and cast strictly to target types (UTC timestamp, local timestamp, numbers, booleans) so bad values fail early.
-- Kept NULLs as-is without guessing or imputing:
-  - demand_imputed_pudl_mwh_imputation_code: 98,397 missing (99.423%)
-  - demand_imputed_pudl_mwh: 928 missing (0.938%)
-  - demand_reported_mwh: 426 missing (0.430%)
-  - hdd_65_daily and cdd_65_daily: 40 missing each (0.040%)
-- Deduplication checks datetime_utc (0 exact duplicates removed; conflicting rows fail). Partial boundary/DST day counts and local hour are kept as-is, and the 14 MWh minimum in demand_reported_mwh is noted as an observation rather than dropped automatically.
+### Cleaning decisions
+
+The profiling values below are from batch `48e7a1d23f5a`, as recorded in
+[`phase2_profiling_details.md`](./phase2_profiling_details.md) (§§3.1–3.5).
+The cleaning-run row counts are from batch `phase3_hisham_audit`; the existing
+console capture records the selected batch and the `clean.py` before/after
+line in [`logs/preload_pass.log`](./logs/preload_pass.log:2). Cleaned NULL
+counts appear on lines 14–18, and the preserved flag counts on line 39.
+
+| Issue found in profiling | Decision | Before → after |
+|---|---|---|
+| 35 raw source columns are TEXT | Parse timestamps, numbers, booleans, and local calendar integers into typed values in clean staging; raw stays unchanged. | 35 TEXT source columns → typed values (profiling details §2; clean log line 5) |
+| Imputation-code NULLs | Keep NULLs; do not infer missing demand from the code field. | 98,397 NULLs → 98,397 NULLs (profiling details §3.2; clean log line 16) |
+| `demand_imputed_pudl_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 928 → 928 NULLs (profiling details §3.2; clean log line 15) |
+| `demand_reported_mwh` NULLs | Keep NULLs; do not impute in cleaning. | 426 → 426 NULLs (profiling details §3.2; clean log line 14) |
+| `hdd_65_daily` / `cdd_65_daily` NULLs | Keep NULLs; do not impute in cleaning. | 40 / 40 → 40 / 40 NULLs (profiling details §3.2; clean log lines 17–18) |
+| `hour` differs from the UTC clock but matches local clock | Treat `hour` as local hour; use UTC timestamp as the stable time key. | 98,968 UTC-hour mismatches; 0 local-hour mismatches (profiling details §3.1) |
+| `demand_reported_mwh` has a low minimum | Keep the 14 MWh observation and flag it for investigation; do not filter it. | 14 MWh vs. 14,372 MWh minimum in other demand fields (profiling details §3.5) |
+| Duplicate UTC timestamps | Reject conflicting duplicate keys; no duplicate timestamp groups were profiled, and no exact duplicates were removed in the cited clean run. | 0 duplicate groups; 0 removed (profiling details §3.1; `preload_pass.log`, clean.py line 8) |
+| Partial first/last local dates and DST-length dates | Preserve source coverage; do not pad partial or 23/25-hour dates. | Edge dates: 23 and 17 rows; DST dates: 11 with 23 and 11 with 25 rows (profiling details §3.4) |
+| Imputation and preliminary-weather flags | Preserve flags as metadata; do not treat them as failures or impute them away. | 571 imputed-demand flags; 1,947 preliminary-weather flags (profiling details §3.5; clean log line 39) |
+
+#### Before/after row counts
+
+| Batch | Raw batch rows | Clean rows | Removed |
+|---|---:|---:|---:|
+| `phase3_hisham_audit` | 98,968 | 98,968 | 0 |
+
+The row counts and zero-removal result come from `clean.py` output for the
+selected batch (`preload_pass.log`, lines 2 and 7–8). These are a saved
+pre-existing console capture, not a run performed during this audit.
+
+### Q2 views and JOIN justification
+
+- `dw.v_q2_load_shape_by_year_season_hour` joins `dw.fact_demand`,
+  `dw.fact_weather_weighted`, and `dw.dim_datetime` on their shared
+  `datetime_id`. The two fact tables each have one row per datetime, so inner
+  joins align demand with its corresponding weighted solar/cloud measures;
+  the datetime dimension supplies year, meteorological season, and local hour.
+- `dw.v_q2_midday_dip` uses the same tables and `datetime_id` joins. Its
+  definition is average demand at local hours 17–19 minus average demand at
+  local hours 11–14. A larger positive value means a deeper midday dip
+  relative to the evening ramp.
+- Seasons follow `dw.dim_datetime` in `sql/05_load_dw.sql`: meteorological
+  seasons derived from local month (winter Dec–Feb, spring Mar–May, summer
+  Jun–Aug, fall Sep–Nov).
+- **Real first rows:** NOT EXECUTED in this audit. No database was running and
+  there was no listener on port 5432; no result rows are claimed here. Once the
+  views are loaded, run:
+
+  ```sql
+  SELECT * FROM dw.v_q2_load_shape_by_year_season_hour
+  ORDER BY year, season, local_hour
+  LIMIT 5;
+
+  SELECT * FROM dw.v_q2_midday_dip
+  ORDER BY year, season
+  LIMIT 5;
+  ```
+
+### Low reported-demand observation
+
+The profiled minimum is 14 MWh versus 14,372 MWh for the other demand fields
+(`phase2_profiling_details.md`, §3.5). The real affected timestamps and
+associated values were **NOT EXECUTED / not available** during this audit
+because PostgreSQL was not running. Query every row at the observed minimum
+after the database is available; this does not remove or alter any data:
+
+```sql
+SELECT
+    datetime_utc,
+    demand_reported_mwh,
+    demand_mwh,
+    demand_imputed_pudl_mwh,
+    demand_source,
+    demand_imputed_pudl_mwh_imputation_code
+FROM clean_data.stg_caiso_clean
+WHERE demand_reported_mwh = 14
+ORDER BY datetime_utc;
+```
