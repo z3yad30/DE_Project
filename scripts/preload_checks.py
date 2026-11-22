@@ -423,22 +423,23 @@ def run_preload_checks(
     for result in results:
         if result.passed:
             logger.info("DQ PASS [%s]: %s", result.rule_name, result.message)
-        elif result.rule_name.endswith("_null_share"):
-            logger.error(
-                "DQ FAIL [%s]: expected <= %s%% NULL share, found %s",
-                result.rule_name,
-                result.threshold,
-                result.message,
-            )
         else:
-            logger.error(
-                "DQ FAIL [%s]: expected %s, found %s; %s",
-                result.rule_name,
-                result.threshold,
-                result.offending_count,
-                result.message,
-            )
             failures.append(result)
+            if result.rule_name.endswith("_null_share"):
+                logger.error(
+                    "DQ FAIL [%s]: expected <= %s%% NULL share, found %s",
+                    result.rule_name,
+                    result.threshold,
+                    result.message,
+                )
+            else:
+                logger.error(
+                    "DQ FAIL [%s]: expected %s, found %s; %s",
+                    result.rule_name,
+                    result.threshold,
+                    result.offending_count,
+                    result.message,
+                )
 
     if failures:
         summary_parts = []
