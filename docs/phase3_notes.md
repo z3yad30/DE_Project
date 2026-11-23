@@ -18,7 +18,10 @@ The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diag
 
 ## Hisham notes
 
-<!-- This skeleton is for Hisham's Phase 3 notes. -->
+**CREATED AS FALLBACK for Hisham:** The local validation batch contained
+98,968 raw rows; cleaning retained 98,968 rows and removed no exact duplicates.
+The cleaning decisions and row-count table are recorded in
+[Cleaning decisions](#cleaning-decisions).
 
 ## Q3 views and JOIN justification
 
@@ -27,20 +30,42 @@ The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diag
 - Joins: `dw.fact_demand` → `dw.dim_datetime` on `datetime_id`, then `dw.dim_datetime` → `dw.dim_holiday` on `holiday_id`.
 - Keys: `dw.fact_demand.datetime_id` and `dw.dim_datetime.datetime_id` identify the hourly fact/dimension row; `dw.dim_datetime.holiday_id` references `dw.dim_holiday.holiday_id`.
 - JOIN justification: The inner joins assign each demand row to its local hour, weekend flag, and holiday flag combination through the warehouse keys. `dw.dim_holiday` has no `holiday_date` column, and `sql/08_views_q3.sql` uses no left join.
-- **Real first rows: NOT EXECUTED.** The view has not been run against PostgreSQL in this audit.
+
+**CREATED AS FALLBACK for Hisham (real output requested by Fatma's F11b):**
+first rows from `dw.v_q3_peak_by_hour_weekend_holiday`, local validation batch
+`phase3-final-local-seed`.
+
+| local_hour | is_weekend | is_holiday | avg_demand_mwh | max_demand_mwh |
+|---:|:---:|:---:|---:|---:|
+| 0 | false | false | 25526.452179557252 | 40644 |
+| 0 | false | true | 23925.767123287671 | 36778 |
+| 0 | true | false | 25194.907980826326 | 37080 |
+| 0 | true | true | 24260.761904761905 | 31003 |
+| 1 | false | false | 24020.594803245007 | 37350 |
 
 ### City temperature-demand correlation
 
 - Joins: `dw.fact_city_temperature` → `dw.dim_city` on `city_id` and → `dw.fact_demand` on `datetime_id`.
 - Keys: `(datetime_id, city_id)` identifies a city temperature fact; `datetime_id` aligns that city temperature with the corresponding hourly demand.
 - JOIN justification: The two fact tables share the required hourly grain, and the city dimension supplies the city display name. The view groups on city and ranks absolute Pearson correlation.
-- **Real first rows: NOT EXECUTED.** The view has not been run against PostgreSQL in this audit.
+
+**CREATED AS FALLBACK for Hisham (real output requested by Fatma's F11b):**
+first rows from `dw.v_q3_city_temp_demand_corr`, local validation batch
+`phase3-final-local-seed`.
+
+| city_id | city_name | temperature_demand_corr | correlation_rank |
+|---:|---|---:|---:|
+| 7 | Fresno | 0.6678662203009746 | 1 |
+| 2 | Riverside | 0.6438574194140797 | 2 |
+| 6 | Sacramento | 0.6410168506026077 | 3 |
+| 1 | Los Angeles | 0.6147983765193056 | 4 |
+| 3 | San Diego | 0.5899700863232336 | 5 |
 
 ### Cleaning decisions
 
 The profiling values below are from profiled batch `48e7a1d23f5a`, as recorded in
 [`phase2_profiling_details.md`](./phase2_profiling_details.md) (§§3.1–3.5).
-No cleaning-run console log or batch name is cited here.
+The local validation clean run used batch `phase3-final-local-seed`.
 
 | Issue found in profiling | Decision | Before → after |
 |---|---|---|
@@ -57,8 +82,57 @@ No cleaning-run console log or batch name is cited here.
 
 #### Before/after row counts
 
-**NOT EXECUTED.** The Phase 3 cleaning pipeline was not run during this audit,
-so no cleaned row count or batch-specific before/after result is claimed here.
+**CREATED AS FALLBACK for Hisham:** These observed counts are from local
+validation batch `phase3-final-local-seed`, loaded from an existing CSV rather than
+a new Kaggle ingestion run.
+
+| Measure | Before cleaning (raw batch) | After cleaning | Difference |
+|---|---:|---:|---:|
+| Rows | 98,968 | 98,968 | 0 |
+
+## Q1 views and JOIN justification
+
+**CREATED AS FALLBACK for Hisham; Q1 view documentation requested by Zeyad.**
+
+- `dw.v_q1_demand_by_temp_bin` joins `dw.fact_demand` to
+  `dw.fact_weather_weighted` on `datetime_id`, then joins
+  `dw.dim_datetime` on the same key. Both facts have one row per datetime;
+  the joins align each demand observation with its weather and canonical
+  datetime row. The view bins non-NULL `temp_pop_wt_c` values with
+  `FLOOR(temp_pop_wt_c / 2.0) * 2`, then reports hourly row count, average
+  demand, and sample standard deviation for each 2-degree Celsius bin.
+- `dw.v_q1_demand_slope` reads the binned view, orders bins by their lower
+  temperature bound, and uses `LAG(avg_demand_mwh)` to report the previous
+  bin's average and the change from that average. This makes temperature
+  intervals where demand begins increasing visible.
+- The views were queried against the 98,968-row local validation batch
+  `phase3-final-local-seed`, loaded from an existing CSV; this was not a new Kaggle
+  ingestion run.
+
+First rows from `dw.v_q1_demand_by_temp_bin`:
+
+| temp_bin_c | hours_count | avg_demand_mwh | stddev_demand_mwh |
+|---:|---:|---:|---:|
+| 2 | 131 | 22849.833522448625 | 1809.527824625498 |
+| 4 | 705 | 22701.634042553191 | 1780.560597683010 |
+| 6 | 2296 | 22425.476490671032 | 2137.260735643377 |
+| 8 | 4818 | 22646.941021397257 | 2599.571797385675 |
+| 10 | 7708 | 22942.650016488034 | 2808.615501397326 |
+
+First rows from `dw.v_q1_demand_slope`:
+
+| temp_bin_c | previous_bin_avg_demand_mwh | demand_increase_from_previous_bin_mwh |
+|---:|---:|---:|
+| 2 | NULL | NULL |
+| 4 | 22849.833522448625 | -148.199479895434 |
+| 6 | 22701.634042553191 | -276.157551882159 |
+| 8 | 22425.476490671032 | 221.464530726225 |
+| 10 | 22646.941021397257 | 295.708995090777 |
+
+In this result, average demand first increases between the 6-degree and
+8-degree bins (+221.465 MWh); it increases by a further 295.709 MWh in the
+10-degree bin. These are descriptive bin-to-bin changes, not a causal
+temperature estimate.
 
 ### Q2 views and JOIN justification
 
@@ -74,9 +148,27 @@ so no cleaned row count or batch-specific before/after result is claimed here.
 - Seasons follow `dw.dim_datetime` in `sql/05_load_dw.sql`: meteorological
   seasons derived from local month (winter Dec–Feb, spring Mar–May, summer
   Jun–Aug, fall Sep–Nov).
-- **Real first rows:** NOT EXECUTED in this audit. No database was running and
-  there was no listener on port 5432; no result rows are claimed here. Once the
-  views are loaded, run:
+
+**CREATED AS FALLBACK for Hisham:** real first rows from both Q2 views,
+local validation batch `phase3-final-local-seed`.
+
+| year | season | local_hour | avg_demand_mwh | avg_shortwave_radiation_pop_wt_wm2 | avg_cloud_cover_pop_wt_pct |
+|---:|---|---:|---:|---:|---:|
+| 2015 | fall | 0 | 26854.472527472527 | 0 | 25.1558511853295586 |
+| 2015 | fall | 1 | 24713.826086956522 | 0 | 26.9239876824534399 |
+| 2015 | fall | 2 | 23364.395604395604 | 0 | 29.9578563779618531 |
+| 2015 | fall | 3 | 22460.362637362637 | 0 | 36.4625962651957566 |
+| 2015 | fall | 4 | 21845.538461538462 | 0 | 35.6904750263686385 |
+
+| year | season | midday_avg_demand_mwh | evening_ramp_avg_demand_mwh | midday_dip_mwh |
+|---:|---|---:|---:|---:|
+| 2015 | fall | 28004.096153846154 | 31577.589743589744 | 3573.493589743590 |
+| 2015 | summer | 31451.802419354839 | 37048.322580645161 | 5596.520161290322 |
+| 2015 | winter | 25626.677419354839 | 26935.924731182796 | 1309.247311827957 |
+| 2016 | fall | 26895.724957380081 | 29958.019333529819 | 3062.294376149738 |
+| 2016 | spring | 25354.347826086957 | 26102.105072463768 | 747.757246376811 |
+
+Rerun the views with:
 
   ```sql
   SELECT * FROM dw.v_q2_load_shape_by_year_season_hour
@@ -92,9 +184,14 @@ so no cleaned row count or batch-specific before/after result is claimed here.
 
 The profiled minimum is 14 MWh versus 14,372 MWh for the other demand fields
 (`phase2_profiling_details.md`, §3.5). The real affected timestamps and
-associated values were **NOT EXECUTED / not available** during this audit
-because PostgreSQL was not running. Query every row at the observed minimum
-after the database is available; this does not remove or alter any data:
+associated values were queried from clean staging for local validation batch
+`phase3-final-local-seed`. The observation is retained, not filtered:
+
+| datetime_utc | demand_reported_mwh | demand_mwh | demand_imputed_pudl_mwh | demand_source | demand_imputed_pudl_mwh_imputation_code |
+|---|---:|---:|---:|---|---|
+| 2019-12-20 00:00:00+00 | 14.0 | 24682.494335687497 | 24682.494335687497 | pudl | local_outlier_low |
+
+Query every row at the observed minimum; this does not remove or alter any data:
 
 ```sql
 SELECT

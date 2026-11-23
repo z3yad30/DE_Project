@@ -56,6 +56,24 @@ services:
       - pipeline_net
     restart: "no"
 
+  clean:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    container_name: clean
+    profiles: ["clean"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    command: ["python", "scripts/run_pipeline.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    restart: "no"
+
 volumes:
   pgdata:
   pgadmin_data:

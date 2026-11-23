@@ -1,8 +1,8 @@
 # California Electricity Demand and Weather Analytics
 
-This project downloads the CAISO hourly demand and population-weighted weather dataset from Kaggle, preserves the original CSV in `data/raw/`, and loads its source fields into a PostgreSQL raw layer with batch-level ingestion records. Phase 1 and the Phase 2 ingestion/raw-storage workflow are complete; Phases 3–6 have not started.
+This project downloads the CAISO hourly demand and population-weighted weather dataset from Kaggle, preserves the original CSV in `data/raw/`, and loads its source fields into a PostgreSQL raw layer with batch-level ingestion records. Phases 1 and 2 are complete; Phase 3, including data-quality checks, is in progress; Phases 4–6 have not started.
 
-**Project status:** Phase 1 — Done; Phase 2 — Done (verified by running the ingestion and SQL proof/profile scripts); Phases 3–6 — Not started.
+**Project status:** Phase 1 — Done; Phase 2 — Done (verified by running the ingestion and SQL proof/profile scripts); Phase 3 — In progress (19 pre-load and 34 post-load checks pass on the stored 98,968-row batch; a live Kaggle-to-clean run remains unverified); Phases 4–6 — Not started.
 
 ## Table of contents
 
@@ -14,6 +14,7 @@ This project downloads the CAISO hourly demand and population-weighted weather d
 - [Command reference](#command-reference)
 - [What is in this repository](#what-is-in-this-repository)
 - [How ingestion works](#how-ingestion-works)
+- [How cleaning differs from ingestion](#how-cleaning-differs-from-ingestion)
 - [How dependencies work (no virtualenv)](#how-dependencies-work-no-virtualenv)
 - [How to look at the data](#how-to-look-at-the-data)
 - [Running it more than once](#running-it-more-than-once)
@@ -24,13 +25,13 @@ This project downloads the CAISO hourly demand and population-weighted weather d
 
 ## Team
 
-| Name | ID | Phase 1 Role | Phase 2 Role |
-|------|----|--------------|---------------|
-| Hisham Wael Hosny | 692300279 | Dataset description & data dictionary | Raw data profiling and notes |
-| Zeyad Mohamed | 692300066 | Docker setup (PostgreSQL, pgAdmin), GitHub repo & submission video | Docker, Compose, integration |
-| Mohamed Mostafa | 692300110 | Architecture diagram | Logging, ingest entry point, architecture diagram |
-| Basel Tamer Fathy | 692300055 | Database table design (star schema) | Raw schema and loader |
-| Fatma Shrief | 692300201 | Dataset selection, proposal lead, analytical questions (Q1-Q3) | Kaggle extraction (`scripts/extract.py`) |
+| Name | ID | Phase 1 Role | Phase 2 Role | Phase 3 Role |
+|------|----|--------------|---------------|---------------|
+| Hisham Wael Hosny | 692300279 | Dataset description & data dictionary | Raw data profiling and notes | Pre-load checks, Phase 3 notes, and Q2 views |
+| Zeyad Mohamed | 692300066 | Docker setup (PostgreSQL, pgAdmin), GitHub repo & submission video | Docker, Compose, integration | Docker integration, pipeline runner, Q1 views, README, and lab checklist |
+| Mohamed Mostafa | 692300110 | Architecture diagram | Logging, ingest entry point, architecture diagram | Post-load SQL checks, fail-fast runner, failure demos, and `DATA_QUALITY.md` |
+| Basel Tamer Fathy | 692300055 | Database table design (star schema) | Raw schema and loader | Star-schema DDL, warehouse load SQL, and ER diagram |
+| Fatma Shrief | 692300201 | Dataset selection, proposal lead, analytical questions (Q1-Q3) | Kaggle extraction (`scripts/extract.py`) | Python cleaning module and Q3 views |
 
 ## Dataset
 
@@ -66,21 +67,22 @@ The image below shows the current Phase 2 implementation. Its future-phases pane
 - **Docker Compose:** the command-line tool that configures and runs the project's services from `docker-compose.yml`.
 - **Build context:** the files Docker receives for an image build; `.dockerignore` excludes files from it.
 - **Build layer:** a cached filesystem result of a Dockerfile step that can be reused when its inputs have not changed.
-- **Service:** a named container configuration in the Compose file, such as `postgres`, `pgadmin`, or `ingest`.
+- **Service:** a named container configuration in the Compose file, such as `postgres`, `pgadmin`, `ingest`, or `clean`.
 - **Compose project name:** a label that groups a Compose stack's resources; `-p readme_test` gives the test stack separate named volumes.
 - **Network:** a private connection that lets the project's containers reach each other by service name.
 - **Bind mount:** a mapping from a host folder to a path inside a container; here `./data/raw` maps to `/data/raw`.
 - **Named volume:** Docker-managed persistent storage; `pgdata` holds PostgreSQL database files.
 - **Port mapping:** a route from a host port to a container port, making PostgreSQL available on `localhost:5432` and pgAdmin on `localhost:8080`.
 - **Healthcheck:** a repeated readiness test; PostgreSQL's check runs `pg_isready`.
-- **Compose profile:** an optional service group; the `ingest` profile keeps ingestion out of the default `up` startup.
+- **Compose profile:** an optional service group; the `ingest` and `clean` profiles keep one-off jobs out of the default `up` startup.
 
 ![Current Phase 2 architecture](docs/architecture_phase2.png)
 
-**Planned pipeline for later phases (not implemented):**
+**Phase 3 cleaning pipeline (implemented; live Kaggle-to-clean validation remains):**
 
 ```text
-[Source] -> [Python Ingestion] -> [PostgreSQL] -> [Kestra Orchestrator] -> [Dashboard]
+[Successful raw batch] -> [Python cleaning + pre-load checks] -> [clean_data staging]
+    -> [dw full refresh + post-load checks] -> [commit]
 ```
 
 Implemented Compose services:
@@ -90,6 +92,7 @@ Implemented Compose services:
 | `postgres` | `postgres:16` | `localhost:5432`; started by `docker compose up -d`. |
 | `pgadmin` | `dpage/pgadmin4` | http://localhost:8080; started by `docker compose up -d`. |
 | `ingest` | Built from `scripts/Dockerfile` | On demand with `docker compose run --rm ingest`; enabled by the `ingest` profile. |
+| `clean` | Built from `scripts/Dockerfile` | On demand with `docker compose run --rm --build clean`; enabled by the `clean` profile. |
 
 ## Prerequisites and Quick Start
 
@@ -122,9 +125,10 @@ Start the database and pgAdmin, check that PostgreSQL is healthy, and run ingest
 docker compose up -d
 docker compose ps
 docker compose run --rm ingest
+docker compose run --rm --build clean
 ```
 
-On the verified dataset, the first successful run logged `Records fetched: 98968`, `Records loaded into raw_data.raw_caiso_hourly: 98968`, and a `SUMMARY` with `status=SUCCESS http=200 fetched=98968 loaded=98968`. The CSV is stored in `./data/raw/`; the `raw_data.raw_caiso_hourly` table contains the rows.
+On the verified dataset, the first successful ingestion run logged `Records fetched: 98968`, `Records loaded into raw_data.raw_caiso_hourly: 98968`, and a `SUMMARY` with `status=SUCCESS http=200 fetched=98968 loaded=98968`. The CSV is stored in `./data/raw/`; the `raw_data.raw_caiso_hourly` table contains the rows. The clean command selects the latest successful batch, rebuilds staging and `dw`, and reports its quality checks and row counts.
 
 To see the latest database result from the terminal:
 
@@ -144,10 +148,18 @@ Run these commands from the repository root. They use the default Compose projec
 
 | Command | What it does | When to use it | What you should see |
 |---|---|---|---|
-| `docker compose up -d` | Starts the default services in the background. | First setup or after stopping the stack. | `postgres` becomes healthy and `pgadmin` starts; the `ingest` profile service is not started. |
+| `docker compose up -d` | Starts the default services in the background. | First setup or after stopping the stack. | `postgres` becomes healthy and `pgadmin` starts; the profiled `ingest` and `clean` services are not started. |
 | `docker compose ps` | Shows the Compose containers and their status. | Check readiness and mapped ports. | `postgres` reports healthy; `pgadmin` is running. |
-| `docker compose build ingest` | Builds the ingestion image from `scripts/Dockerfile`. | After changing ingestion code or `scripts/requirements.txt`. | Build completes and reports the `ingest` image as built. |
+| `docker compose build ingest clean` | Builds the ingestion and cleaning images from `scripts/Dockerfile`. | After changing pipeline code or `scripts/requirements.txt`. | Build completes and reports both images as built. |
 | `docker compose run --rm ingest` | Starts a one-off ingestion container, runs `scripts/ingest.py`, then removes that container. | Download and load the Kaggle CSV. | Log lines end with `SUMMARY ... status=SUCCESS` or `status=SKIPPED`; failures return a nonzero exit code. |
+| `docker compose run --rm --build clean` | Builds and runs the one-off cleaning pipeline container. | First clean run or after code changes. | Cleaning counts, pre-load and post-load `DQ PASS` lines, and `PIPELINE SUMMARY status=SUCCESS`; a failed stage rolls back and returns `1`. |
+| `docker compose run --rm clean` | Runs `scripts/run_pipeline.py` in a one-off container. | Clean the latest successful raw batch after the image is built. | Same pipeline stages and summary as the build-and-run command. |
+| `docker compose run --rm clean python scripts/demo_preload_fail.py --case negative_demand` | Injects a negative demand value into an in-memory clean-data copy and runs pre-load checks. | Demonstrate a pre-load rejection without writing the injected value. | `demand_mwh_positive` fails; the command returns `1`. |
+| `docker compose run --rm clean python scripts/demo_quality_fail.py --case negative_demand` | Copies the warehouse into `dw_test`, corrupts the copy, and runs post-load checks. | Demonstrate a post-load failure without modifying `dw`. | `demand_mwh_positive` fails, `dw_test` is dropped, and the command returns `1`. |
+| `docker compose run --rm clean python scripts/run_quality.py` | Runs the standalone SQL post-load checks against `dw`. | Recheck the warehouse without running cleaning. | One result line per check and a `DQ SUMMARY`; failures return `1`. |
+| `docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/06_views_q1.sql` | Creates the two Q1 temperature-demand views. | Run the temperature-bin and demand-slope analysis after a warehouse load. | `CREATE VIEW` for each Q1 view; query `dw.v_q1_demand_by_temp_bin` and `dw.v_q1_demand_slope` to inspect results. |
+| `docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/07_views_q2.sql` | Creates the Q2 solar and load-shape views. | Run the solar and daily-load-shape analysis. | `CREATE VIEW` for each Q2 view. |
+| `docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/08_views_q3.sql` | Creates the Q3 calendar and city-temperature views. | Run the calendar-peak and city-correlation analysis. | `CREATE VIEW` for each Q3 view. |
 | `docker compose run --rm ingest python scripts/load_raw.py /data/raw/<file>.csv` | Manually loads the named CSV using the loader, bypassing the SHA-256 skip check. Replace `<file>` with a real filename; `/data/raw` is the container path mapped to the host folder `./data/raw`. | Manually append a CSV batch for testing. | The loader prints the number of inserted rows; the table row count increases by that amount. |
 | `docker compose logs` | Displays logs for the running default services. | Inspect PostgreSQL or pgAdmin startup. | Service logs appear; a completed `run --rm ingest` prints its logs directly to the terminal and is not retained as a running service. |
 | `docker compose logs -f postgres` | Follows PostgreSQL logs. | Watch database startup or connection messages. | PostgreSQL log output continues until interrupted with Ctrl+C. |
@@ -171,30 +183,54 @@ set +a
 
 ```text
 DE_Project/
+├── DATA_QUALITY.md
 ├── data/
 │   └── raw/                         # Runtime CSVs; git-ignored and not committed
 ├── docs/
 │   ├── .gitkeep
 │   ├── Project_Proposal_CAISO_Demand_Weather.pdf
 │   ├── architecture_phase2.png
+│   ├── er_diagram.md
+│   ├── er_diagram.png
+│   ├── evidence/
+│   │   ├── quality_fail_duplicate_pk.txt
+│   │   ├── quality_fail_negative_demand.txt
+│   │   ├── quality_fail_null_spike.txt
+│   │   ├── quality_fail_orphan_fk.txt
+│   │   └── quality_pass.txt
 │   ├── lab_demo_checklist.md
+│   ├── lab_demo_checklist_phase3.md
 │   ├── phase2_notes.md
-│   └── phase2_profiling_details.md
+│   ├── phase2_profiling_details.md
+│   └── phase3_notes.md
 ├── flows/
 │   └── .gitkeep
 ├── scripts/
 │   ├── .gitkeep
 │   ├── Dockerfile
+│   ├── clean.py
+│   ├── demo_preload_fail.py
+│   ├── demo_quality_fail.py
+│   ├── dq_common.py
 │   ├── extract.py
 │   ├── ingest.py
 │   ├── load_raw.py
 │   ├── logging_config.py
-│   └── requirements.txt
+│   ├── preload_checks.py
+│   ├── requirements.txt
+│   ├── run_pipeline.py
+│   └── run_quality.py
 ├── sql/
 │   ├── .gitkeep
 │   ├── 01_raw_schema.sql
 │   ├── 02_raw_proof.sql
-│   └── 03_profile_raw.sql
+│   ├── 03_profile_raw.sql
+│   ├── 04_schema_dw.sql
+│   ├── 05_load_dw.sql
+│   ├── 06_views_q1.sql
+│   ├── 07_views_q2.sql
+│   ├── 08_views_q3.sql
+│   └── quality_checks.sql
 ├── .dockerignore
 ├── .env.example
 ├── .gitattributes
@@ -212,7 +248,7 @@ DE_Project/
 - [.env.example](.env.example) is the template for PostgreSQL, pgAdmin, Kaggle, retry, and raw-directory settings. Copy it to `.env`, add your Kaggle credentials, and keep `.env` private.
 - [.gitattributes](.gitattributes) marks text for LF line endings and PNG/PDF files as binary; Git applies it during checkout and text normalization.
 - [.gitignore](.gitignore) excludes `.env`, `data/`, downloaded data files, and local Python/database artifacts from Git.
-- [docker-compose.yml](docker-compose.yml) reads `.env` and configures PostgreSQL, pgAdmin, and the profiled ingestion service, including ports, healthcheck, volumes, environment, and network; it creates and runs those services when invoked with the `docker compose` commands above.
+- [docker-compose.yml](docker-compose.yml) reads `.env` and configures PostgreSQL, pgAdmin, and the profiled ingestion and cleaning services, including ports, healthcheck, volumes, environment, and network; the profiled jobs stay out of default `up -d`.
 
 ### Documentation and runtime folders
 
@@ -221,8 +257,11 @@ DE_Project/
 - [docs/Project_Proposal_CAISO_Demand_Weather.pdf](docs/Project_Proposal_CAISO_Demand_Weather.pdf) is a static project proposal to read with a PDF viewer; it is not run by the pipeline.
 - [docs/architecture_phase2.png](docs/architecture_phase2.png) is the architecture image embedded above; it is a static diagram, not an executable input.
 - [docs/lab_demo_checklist.md](docs/lab_demo_checklist.md) is the numbered live-demo guide. Its commands operate on the running Compose project; it produces terminal output and database rows rather than a separate file.
+- [docs/lab_demo_checklist_phase3.md](docs/lab_demo_checklist_phase3.md) covers the clean pipeline, warehouse checks, Q1-Q3 views, and both failure demos; its commands produce terminal output and database results.
 - [docs/phase2_notes.md](docs/phase2_notes.md) summarizes the verified Phase 2 ingestion and profiling findings. Read it as documentation; it is not a command.
 - [docs/phase2_profiling_details.md](docs/phase2_profiling_details.md) contains the detailed profiling results behind the summary notes. Read it as documentation; the profiling SQL that generates result sets is `sql/03_profile_raw.sql`.
+- [docs/phase3_notes.md](docs/phase3_notes.md) explains the warehouse design, cleaning decisions, and Q1-Q3 view joins, including the verified Q1 sample rows.
+- [DATA_QUALITY.md](DATA_QUALITY.md) documents the pre-load and post-load rules, thresholds, failure behavior, and transaction policy.
 
 ### Ingestion scripts and configuration
 
@@ -231,6 +270,9 @@ DE_Project/
 - [scripts/extract.py](scripts/extract.py) reads `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KAGGLE_DATASET`, `MAX_RETRIES`, and the raw directory; downloads the dataset ZIP, extracts its one CSV to a timestamped file, and returns file metadata. `scripts/ingest.py` calls it; it does not load data into PostgreSQL.
 - [scripts/ingest.py](scripts/ingest.py) coordinates one run: it creates a batch ID, ensures the schema, calls extraction, counts CSV data rows, applies the SHA-256 skip guard, loads new data, records the run, and returns exit code 0 or 1. Run it with `docker compose run --rm ingest`.
 - [scripts/load_raw.py](scripts/load_raw.py) checks a CSV header, loads its source columns as text through PostgreSQL `COPY`, and appends the rows with batch/file metadata. `scripts/ingest.py` calls it for new files; for a deliberate manual load use the command in the reference table.
+- [scripts/clean.py](scripts/clean.py) selects the latest `SUCCESS` batch that contains raw rows, cleans it into typed data, logs before/after statistics, and full-refreshes the clean staging table without taking transaction ownership.
+- [scripts/run_pipeline.py](scripts/run_pipeline.py) runs cleaning, pre-load checks, staging and warehouse loads, and post-load checks using one connection and transaction; it commits only when every stage passes.
+- [scripts/preload_checks.py](scripts/preload_checks.py), [scripts/run_quality.py](scripts/run_quality.py), and [scripts/dq_common.py](scripts/dq_common.py) provide the shared result format and the pre-load and post-load quality checks. The demo scripts exercise failures without modifying the real warehouse.
 - [scripts/logging_config.py](scripts/logging_config.py) configures UTC-formatted stdout logging for the scripts; the other Python modules import it, so it has no separate run command.
 
 ### SQL files
@@ -238,6 +280,9 @@ DE_Project/
 - [sql/01_raw_schema.sql](sql/01_raw_schema.sql) creates schema `raw_data`, the raw table, its batch index, and the ingestion log table. `scripts/load_raw.py` executes it through `ensure_schema()`; to run it directly, load `.env` into your shell and use `docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < sql/01_raw_schema.sql`.
 - [sql/02_raw_proof.sql](sql/02_raw_proof.sql) contains read-only checks for total rows, sample rows, batch counts, recent ingestion attempts, and column types. Run it with the matching command in the command reference.
 - [sql/03_profile_raw.sql](sql/03_profile_raw.sql) creates session-local profiling views/functions and returns quality-check result sets for the latest stored batch. Run it with the matching command in the command reference.
+- [sql/04_schema_dw.sql](sql/04_schema_dw.sql) and [sql/05_load_dw.sql](sql/05_load_dw.sql) create and full-refresh the warehouse inside the caller's transaction.
+- [sql/06_views_q1.sql](sql/06_views_q1.sql), [sql/07_views_q2.sql](sql/07_views_q2.sql), and [sql/08_views_q3.sql](sql/08_views_q3.sql) define the temperature, solar/load-shape, and calendar/city analysis views.
+- [sql/quality_checks.sql](sql/quality_checks.sql) contains the post-load warehouse checks called by `scripts/run_quality.py`.
 
 `flows/` currently contains only its placeholder file; no orchestration flow is implemented.
 
@@ -248,7 +293,7 @@ DE_Project/
 1. `scripts/ingest.py` generates a 12-character batch ID, records its UTC start time, and logs `START batch=<id>`.
 2. It calls `ensure_schema()` from `scripts/load_raw.py`, which connects to PostgreSQL and runs `sql/01_raw_schema.sql`.
 3. It calls `scripts/extract.py`. That script checks the Kaggle credentials, downloads the configured dataset as a ZIP to a temporary file, requires exactly one CSV, extracts the CSV unchanged to `data/raw/caiso_hourly_<UTC timestamp>.csv`, calculates the file's SHA-256 and size, then removes the temporary ZIP.
-4. `ingest.py` counts CSV data records without counting the header and logs `Records fetched: <count>`.
+4. `ingest.py` counts CSV data records without counting the header and logs `Records fetched: <count>`. An empty CSV is rejected and logged as `FAILED`.
 5. It checks whether that SHA-256 appears in `raw_data.ingestion_log` with status `SUCCESS`. If it does, it logs `SKIP: this exact file was already loaded` and does not load rows. Otherwise, `load_raw.py` checks that the CSV header exactly matches the source columns in the raw table, copies the source values into a temporary PostgreSQL table as text, and appends the rows with `_batch_id` and `_source_file` metadata.
 6. It compares rows loaded with rows fetched; a mismatch fails the run.
 7. In a `finally` block it attempts to write the run to `raw_data.ingestion_log` and logs `SUMMARY`.
@@ -276,6 +321,14 @@ The statuses are:
 - `FAILED`: extraction, schema/connection, header validation, loading, row-count validation, or run logging failed. The script returns exit code `1`; success and skip return exit code `0`.
 
 Connection errors, timeouts, and HTTP 5xx responses are retried up to `MAX_RETRIES` during the initial request, with waits of `2 ** attempt` seconds (2, 4, ...). PostgreSQL connection attempts also retry with exponential waits. HTTP 401, 403, 404, and other non-5xx HTTP errors are not retried. The response-body streaming and ZIP/CSV extraction occur after the request retry loop; a stream interruption there is not retried by the current code. In validation, an interrupted download body produced `FAILED` without loading rows; a subsequent successful run was able to skip the already-loaded dataset.
+
+## How cleaning differs from ingestion
+
+Ingestion checks SHA-256 and skips a file whose content already has a successful
+load; otherwise it appends the original source values to the raw tables. Cleaning
+selects the latest successful raw batch and rebuilds `clean_data` staging and
+`dw` with `TRUNCATE` plus `INSERT` on every run. Reprocessing the same batch
+therefore yields the same row counts rather than skipping the cleaning work.
 
 ## How dependencies work (no virtualenv)
 
@@ -431,8 +484,8 @@ See the [Phase 2 notes](docs/phase2_notes.md) for the findings summary and [deta
 |-------|-------|--------|
 | 1 | Proposal, dataset choice, Docker + PostgreSQL + pgAdmin | Done |
 | 2 | Ingestion and raw storage | Done |
-| 3 | Cleaning, star schema, SQL views | Not started |
-| 4 | Data quality checks | Not started |
+| 3 | Cleaning, star schema, SQL views | In progress; live Kaggle-to-clean validation remains |
+| 4 | Data quality checks | Done; 19 pre-load and 34 post-load checks passed on the local validation batch |
 | 5 | Kestra orchestration, idempotency | Not started |
 | 6 | Dashboard, documentation, demo | Not started |
 

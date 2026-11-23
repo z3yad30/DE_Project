@@ -1,0 +1,41 @@
+ Container phase3_check-ingest-run-a63dfc1d0a60 Creating 
+ Container phase3_check-ingest-run-a63dfc1d0a60 Created 
+2026-11-23T16:01:55.576098+00:00 | INFO | load_raw | Connected to PostgreSQL
+2026-11-23T16:01:55.600039+00:00 | INFO | run_quality | DQ PASS [cdd_65_daily_non_negative]
+2026-11-23T16:01:55.600164+00:00 | INFO | run_quality | DQ PASS [cdd_daily_null_pct]
+2026-11-23T16:01:55.600188+00:00 | INFO | run_quality | DQ PASS [cdh_65_non_negative]
+2026-11-23T16:01:55.600204+00:00 | INFO | run_quality | DQ PASS [city_temperature_city_fk]
+2026-11-23T16:01:55.600217+00:00 | INFO | run_quality | DQ PASS [city_temperature_datetime_fk]
+2026-11-23T16:01:55.600228+00:00 | INFO | run_quality | DQ PASS [cloud_cover_range]
+2026-11-23T16:01:55.600260+00:00 | INFO | run_quality | DQ PASS [datetime_day_of_week_range]
+2026-11-23T16:01:55.600299+00:00 | INFO | run_quality | DQ PASS [datetime_holiday_fk]
+2026-11-23T16:01:55.600328+00:00 | INFO | run_quality | DQ PASS [datetime_hour_range]
+2026-11-23T16:01:55.600342+00:00 | INFO | run_quality | DQ PASS [datetime_month_range]
+2026-11-23T16:01:55.600364+00:00 | INFO | run_quality | DQ PASS [datetime_utc_not_null]
+2026-11-23T16:01:55.600380+00:00 | INFO | run_quality | DQ PASS [datetime_utc_unique]
+2026-11-23T16:01:55.600391+00:00 | INFO | run_quality | DQ PASS [demand_datetime_fk]
+2026-11-23T16:01:55.600400+00:00 | INFO | run_quality | DQ PASS [demand_imputed_null_pct]
+2026-11-23T16:01:55.600407+00:00 | INFO | run_quality | DQ PASS [demand_mwh_positive]
+2026-11-23T16:01:55.600419+00:00 | ERROR | run_quality | DQ FAIL [demand_reported_null_pct]: nulls=2/2 (100.0000%); maximum=1.0%
+2026-11-23T16:01:55.600427+00:00 | INFO | run_quality | DQ PASS [dim_city_count]
+2026-11-23T16:01:55.600435+00:00 | INFO | run_quality | DQ PASS [dim_city_pk]
+2026-11-23T16:01:55.600444+00:00 | INFO | run_quality | DQ PASS [dim_datetime_pk]
+2026-11-23T16:01:55.600465+00:00 | INFO | run_quality | DQ PASS [dim_holiday_pk]
+2026-11-23T16:01:55.600491+00:00 | INFO | run_quality | DQ PASS [fact_city_temperature_pk]
+2026-11-23T16:01:55.600505+00:00 | INFO | run_quality | DQ PASS [fact_city_temperature_vs_clean]
+2026-11-23T16:01:55.600528+00:00 | INFO | run_quality | DQ PASS [fact_demand_pk]
+2026-11-23T16:01:55.600543+00:00 | INFO | run_quality | DQ PASS [fact_weather_weighted_pk]
+2026-11-23T16:01:55.600553+00:00 | INFO | run_quality | DQ PASS [hdd_65_daily_non_negative]
+2026-11-23T16:01:55.600574+00:00 | INFO | run_quality | DQ PASS [hdd_daily_null_pct]
+2026-11-23T16:01:55.600589+00:00 | INFO | run_quality | DQ PASS [hdh_65_non_negative]
+2026-11-23T16:01:55.600598+00:00 | INFO | run_quality | DQ PASS [latest_success_batch_exists]
+2026-11-23T16:01:55.600605+00:00 | INFO | run_quality | DQ PASS [raw_batch_vs_clean]
+2026-11-23T16:01:55.600625+00:00 | INFO | run_quality | DQ PASS [raw_batch_vs_dim_datetime]
+2026-11-23T16:01:55.600654+00:00 | INFO | run_quality | DQ PASS [raw_batch_vs_fact_demand]
+2026-11-23T16:01:55.600668+00:00 | INFO | run_quality | DQ PASS [raw_batch_vs_fact_weather_weighted]
+2026-11-23T16:01:55.600677+00:00 | INFO | run_quality | DQ PASS [shortwave_radiation_non_negative]
+2026-11-23T16:01:55.600685+00:00 | INFO | run_quality | DQ PASS [weather_datetime_fk]
+2026-11-23T16:01:55.600699+00:00 | INFO | run_quality | DQ SUMMARY [post-load]: 33 passed, 1 failed
+2026-11-23T16:01:55.600765+00:00 | ERROR | demo_quality_fail | DEMO DETECTED [null_spike]: demand_reported_null_pct (failed_count=2)
+2026-11-23T16:01:55.602018+00:00 | INFO | demo_quality_fail | Dropped test schema dw_test
+
