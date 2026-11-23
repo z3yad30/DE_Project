@@ -1,7 +1,5 @@
 import logging
-from dataclasses import dataclass
 from typing import Any
-
 import pandas as pd
 from pandas.api.types import (
     is_bool_dtype,
@@ -13,7 +11,7 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from dq_common import DataQualityError
+from dq_common import CheckResult, DataQualityError
 
 
 logger = logging.getLogger(__name__)
@@ -122,17 +120,6 @@ EXPECTED_DTYPES = {
 }
 
 
-@dataclass(frozen=True)
-class CheckResult:
-    rule_name: str
-    passed: bool
-    offending_count: int
-    threshold: Any
-    message: str
-
-    @property
-    def status(self) -> str:
-        return "PASS" if self.passed else "FAIL"
 
 
 def _result(
