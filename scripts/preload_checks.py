@@ -1,4 +1,3 @@
-import logging
 from typing import Any
 import pandas as pd
 from pandas.api.types import (
@@ -11,10 +10,11 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from dq_common import CheckResult, DataQualityError
+from dq_common import CheckResult, DataQualityError, log_results
+from logging_config import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger("preload_checks")
 
 THRESHOLDS: dict[str, Any] = {
     "documented_removals": 0,
@@ -129,10 +129,12 @@ def _result(
     message: str,
 ) -> CheckResult:
     return CheckResult(
-        rule_name=rule_name,
-        passed=offending_count <= threshold,
-        offending_count=offending_count,
-        threshold=threshold,
+        name=rule_name,
+        tier="pre-load",
+        status="PASS" if offending_count <= threshold else "FAIL",
+        failed_count=(
+            offending_count if offending_count > threshold else 0
+        ),
         message=message,
     )
 
@@ -263,20 +265,24 @@ def _check_null_share(df: pd.DataFrame, column: str) -> CheckResult:
     threshold = THRESHOLDS["null_pct_max"][column]
     if column not in df:
         return CheckResult(
-            rule_name=f"{column}_null_share",
-            passed=False,
-            offending_count=1,
-            threshold=threshold,
+            name=f"{column}_null_share",
+            tier="pre-load",
+            status="FAIL",
+            failed_count=1,
             message=f"{column} column is missing",
         )
     null_count = int(df[column].isna().sum())
     null_pct = null_count / len(df) * 100 if len(df) else 0.0
+    passed = null_pct <= threshold
     return CheckResult(
-        rule_name=f"{column}_null_share",
-        passed=null_pct <= threshold,
-        offending_count=null_count,
-        threshold=threshold,
-        message=f"{null_pct:.3f}% NULL ({null_count} rows)",
+        name=f"{column}_null_share",
+        tier="pre-load",
+        status="PASS" if passed else "FAIL",
+        failed_count=0 if passed else null_count,
+        message=(
+            f"{null_pct:.3f}% NULL ({null_count} rows; "
+            f"maximum {threshold:.3f}%)"
+        ),
     )
 
 
@@ -406,43 +412,9 @@ def run_preload_checks(
         _check_day_of_week_range(df),
     ]
 
-    failures = []
-    for result in results:
-        if result.passed:
-            logger.info("DQ PASS [%s]: %s", result.rule_name, result.message)
-        else:
-            failures.append(result)
-            if result.rule_name.endswith("_null_share"):
-                logger.error(
-                    "DQ FAIL [%s]: expected <= %s%% NULL share, found %s",
-                    result.rule_name,
-                    result.threshold,
-                    result.message,
-                )
-            else:
-                logger.error(
-                    "DQ FAIL [%s]: expected %s, found %s; %s",
-                    result.rule_name,
-                    result.threshold,
-                    result.offending_count,
-                    result.message,
-                )
+    log_results(results, logger)
+    failures = [result for result in results if result.status == "FAIL"]
 
     if failures:
-        summary_parts = []
-        for result in failures:
-            if result.rule_name.endswith("_null_share"):
-                summary_parts.append(
-                    f"{result.rule_name}: expected <= {result.threshold}% "
-                    f"NULL share, found {result.message}"
-                )
-            else:
-                summary_parts.append(
-                    f"{result.rule_name}: expected {result.threshold}, "
-                    f"found {result.offending_count}"
-                )
-        raise DataQualityError(
-            f"{len(failures)} preload check(s) failed: "
-            + "; ".join(summary_parts)
-        )
+        raise DataQualityError(failures)
     return results

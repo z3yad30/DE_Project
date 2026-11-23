@@ -58,14 +58,21 @@ def log_stats(stats):
 
 
 def select_source_batch(conn):
-    """Select the latest successfully ingested batch."""
+    """Select the latest successful batch that contains raw records."""
 
     with conn.cursor() as cursor:
         cursor.execute("""
-            SELECT batch_id
-            FROM raw_data.ingestion_log
-            WHERE status = 'SUCCESS'
-            ORDER BY finished_at DESC
+            SELECT log.batch_id
+            FROM raw_data.ingestion_log AS log
+            WHERE log.status = 'SUCCESS'
+              AND EXISTS (
+                  SELECT 1
+                  FROM raw_data.raw_caiso_hourly AS raw
+                  WHERE raw._batch_id = log.batch_id
+              )
+            ORDER BY log.finished_at DESC NULLS LAST,
+                     log.started_at DESC NULLS LAST,
+                     log.batch_id DESC
             LIMIT 1;
         """)
 

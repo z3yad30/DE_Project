@@ -68,6 +68,8 @@ def main():
         # 3. Count the rows in the downloaded CSV
         rows_fetched = count_csv_rows(result.path)
         logger.info("Records fetched: %s", rows_fetched)
+        if rows_fetched == 0:
+            raise ValueError("Downloaded CSV contains no data rows")
 
         # 4. Check whether this exact file was already loaded
         if already_loaded(result.sha256):

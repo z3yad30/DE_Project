@@ -1,183 +1,158 @@
+import argparse
+import sys
+
+from psycopg2 import sql
 
 from dq_common import DataQualityError
 from load_raw import connect
 from logging_config import get_logger
-from run_quality import execute_checks
+from run_quality import run_quality
 
 
 logger = get_logger("demo_quality_fail")
+TEST_SCHEMA = "dw_test"
+DW_TABLES = (
+    "dim_holiday",
+    "dim_datetime",
+    "dim_city",
+    "fact_demand",
+    "fact_weather_weighted",
+    "fact_city_temperature",
+)
 
 
-def create_test_schema(connection):
-    """Create an unconstrained schema with deliberately invalid data."""
-
+def create_test_schema(connection) -> None:
     with connection.cursor() as cursor:
-        cursor.execute("DROP SCHEMA IF EXISTS dw_test CASCADE")
-        cursor.execute("CREATE SCHEMA dw_test")
-
-        cursor.execute("""
-            CREATE TABLE dw_test.dim_holiday (
-                holiday_id INTEGER,
-                is_holiday BOOLEAN,
-                is_weekend BOOLEAN
+        cursor.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                sql.Identifier(TEST_SCHEMA)
             )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE dw_test.dim_datetime (
-                datetime_id INTEGER,
-                month INTEGER,
-                hour INTEGER,
-                day_of_week INTEGER,
-                holiday_id INTEGER
+        )
+        cursor.execute(
+            sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(TEST_SCHEMA))
+        )
+        for table_name in DW_TABLES:
+            cursor.execute(
+                sql.SQL(
+                    "CREATE TABLE {}.{} AS TABLE {}.{} WITH NO DATA"
+                ).format(
+                    sql.Identifier(TEST_SCHEMA),
+                    sql.Identifier(table_name),
+                    sql.Identifier("dw"),
+                    sql.Identifier(table_name),
+                )
             )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE dw_test.dim_city (
-                city_id INTEGER,
-                city_name TEXT
+            cursor.execute(
+                sql.SQL("INSERT INTO {}.{} SELECT * FROM {}.{}").format(
+                    sql.Identifier(TEST_SCHEMA),
+                    sql.Identifier(table_name),
+                    sql.Identifier("dw"),
+                    sql.Identifier(table_name),
+                )
             )
-        """)
+    # CREATE TABLE AS copies columns and data, but not constraints.
 
-        cursor.execute("""
-            CREATE TABLE dw_test.fact_demand (
-                datetime_id INTEGER,
-                demand_mwh NUMERIC,
-                demand_reported_mwh NUMERIC,
-                demand_imputed_pudl_mwh NUMERIC
+
+def corrupt_test_schema(connection, case: str) -> None:
+    with connection.cursor() as cursor:
+        if case == "duplicate_pk":
+            cursor.execute("""
+                INSERT INTO dw_test.dim_city
+                SELECT * FROM dw_test.dim_city
+                LIMIT 1
+            """)
+        elif case == "negative_demand":
+            cursor.execute("""
+                UPDATE dw_test.fact_demand
+                SET demand_mwh = -1
+                WHERE ctid = (
+                    SELECT ctid FROM dw_test.fact_demand LIMIT 1
+                )
+            """)
+        elif case == "orphan_fk":
+            cursor.execute("""
+                UPDATE dw_test.fact_city_temperature AS temperature
+                SET city_id = (
+                    SELECT COALESCE(MAX(city_id), 0) + 1
+                    FROM dw_test.dim_city
+                )
+                WHERE (temperature.datetime_id, temperature.city_id) = (
+                    SELECT datetime_id, city_id
+                    FROM dw_test.fact_city_temperature
+                    LIMIT 1
+                )
+            """)
+        elif case == "null_spike":
+            cursor.execute("""
+                UPDATE dw_test.fact_demand
+                SET demand_reported_mwh = NULL
+            """)
+        else:
+            raise ValueError(f"Unsupported failure case: {case}")
+
+        if cursor.rowcount == 0:
+            raise RuntimeError(
+                f"Cannot apply {case}: the copied warehouse has no target rows"
             )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE dw_test.fact_weather_weighted (
-                datetime_id INTEGER,
-                shortwave_radiation_pop_wt_wm2 NUMERIC,
-                cloud_cover_pop_wt_pct NUMERIC,
-                hdh_65 NUMERIC,
-                cdh_65 NUMERIC,
-                hdd_65_daily NUMERIC,
-                cdd_65_daily NUMERIC
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE dw_test.fact_city_temperature (
-                datetime_id INTEGER,
-                city_id INTEGER,
-                temp_c NUMERIC
-            )
-        """)
-
-        # Duplicate primary keys and invalid holiday data.
-        cursor.execute("""
-            INSERT INTO dw_test.dim_holiday VALUES
-                (1, TRUE, FALSE),
-                (1, FALSE, TRUE)
-        """)
-
-        # Duplicate datetime IDs, invalid date values,
-        # and a reference to a nonexistent holiday.
-        cursor.execute("""
-            INSERT INTO dw_test.dim_datetime VALUES
-                (100, 13, 25, 8, 999),
-                (100, 0, -1, -1, 999)
-        """)
-
-        # Duplicate city IDs.
-        cursor.execute("""
-            INSERT INTO dw_test.dim_city VALUES
-                (1, 'Cairo'),
-                (1, 'Alexandria')
-        """)
-
-        # Duplicate fact keys, negative demand, and excessive NULLs.
-        cursor.execute("""
-            INSERT INTO dw_test.fact_demand VALUES
-                (100, -50, NULL, NULL),
-                (100, 100, NULL, NULL)
-        """)
-
-        # Duplicate fact keys, invalid cloud cover,
-        # negative measurements, and excessive NULLs.
-        cursor.execute("""
-            INSERT INTO dw_test.fact_weather_weighted VALUES
-                (100, -10, 150, -5, -3, NULL, NULL),
-                (100, 20, 50, 10, 10, NULL, NULL)
-        """)
-
-        # Duplicate composite keys and nonexistent references.
-        cursor.execute("""
-            INSERT INTO dw_test.fact_city_temperature VALUES
-                (100, 999, 25),
-                (100, 999, 30)
-        """)
-
-    connection.commit()
-    logger.info("Created dw_test schema with intentionally invalid data")
 
 
-def run_failure_demo():
-    """Run quality checks and verify that failures are detected."""
-
+def run_failure_demo(case: str) -> int:
     connection = connect()
-
     try:
         create_test_schema(connection)
+        corrupt_test_schema(connection, case)
 
-        results = execute_checks(
-            connection,
-            schema="dw_test",
-            include_row_counts=False,
+        try:
+            run_quality(connection, schema=TEST_SCHEMA)
+        except DataQualityError as exc:
+            if not exc.failed_results:
+                raise
+            logger.error("DEMO DETECTED [%s]: %s", case, exc)
+            return 1
+
+        raise RuntimeError(
+            f"Injected {case} corruption was not detected"
         )
-
-        failures = [
-            result for result in results
-            if not result.passed
-        ]
-
-        if not failures:
-            raise DataQualityError(
-                "Demo failed: no quality issues were detected"
-            )
-
-        logger.info(
-            "SUCCESS: Demo detected %s failing checks out of %s",
-            len(failures),
-            len(results),
-        )
-
-        for failure in failures:
-            logger.info(
-                "DETECTED FAILURE: %s",
-                failure.rule_name,
-            )
-
     finally:
         try:
             connection.rollback()
-
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "DROP SCHEMA IF EXISTS dw_test CASCADE"
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(TEST_SCHEMA)
+                    )
                 )
-
             connection.commit()
-            logger.info("Cleaned up dw_test schema")
-
+            logger.info("Dropped test schema %s", TEST_SCHEMA)
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
 
-def main():
-    try:
-        run_failure_demo()
-        return 0
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Demonstrate post-load quality failures on a copy of dw"
+    )
+    parser.add_argument(
+        "--case",
+        required=True,
+        choices=[
+            "duplicate_pk",
+            "negative_demand",
+            "orphan_fk",
+            "null_spike",
+        ],
+    )
+    args = parser.parse_args()
 
+    try:
+        return run_failure_demo(args.case)
     except Exception:
         logger.exception("Failure demonstration could not complete")
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
