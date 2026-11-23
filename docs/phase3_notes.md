@@ -62,7 +62,8 @@ file-by-file guide, including Compose and SQL entry points, is in
   clarify: either document rejection as the chosen safe handling for invalid
   values or add and test field-specific repair rules before claiming automatic
   correction is implemented.
-- For the documented local validation batch `phase3-final-local-seed`, the
+- For the documented local validation batch `095e328d2e34`
+  (`caiso_hourly_20261116T194242Z.csv`), the
   input and cleaned counts were both 98,968; zero exact duplicate rows were
   removed. This batch came from an existing CSV, not a new Kaggle download.
 
@@ -128,12 +129,12 @@ The warehouse is a star schema: `dim_datetime`, `dim_holiday`, and `dim_city` ho
 
 The regenerable entity relationship diagram is in [docs/er_diagram.md](./er_diagram.md); its PNG companion is [docs/er_diagram.png](./er_diagram.png).
 
-## Hisham notes
+## Cleaning run summary
 
-**CREATED AS FALLBACK for Hisham:** The local validation batch contained
-98,968 raw rows; cleaning retained 98,968 rows and removed no exact duplicates.
-The cleaning decisions and row-count table are recorded in
-[Cleaning decisions](#cleaning-decisions).
+The local run on 2026-11-23 selected batch `095e328d2e34`
+(`caiso_hourly_20261116T194242Z.csv`). It read 98,968 raw rows, retained all
+98,968 clean rows, and removed zero exact duplicates. The cleaning decisions
+and row-count table are recorded in [Cleaning decisions](#cleaning-decisions).
 
 ## Q3 views and JOIN justification
 
@@ -143,9 +144,8 @@ The cleaning decisions and row-count table are recorded in
 - Keys: `dw.fact_demand.datetime_id` and `dw.dim_datetime.datetime_id` identify the hourly fact/dimension row; `dw.dim_datetime.holiday_id` references `dw.dim_holiday.holiday_id`.
 - JOIN justification: The inner joins assign each demand row to its local hour, weekend flag, and holiday flag combination through the warehouse keys. `dw.dim_holiday` has no `holiday_date` column, and `sql/08_views_q3.sql` uses no left join.
 
-**CREATED AS FALLBACK for Hisham (real output requested by Fatma's F11b):**
-first rows from `dw.v_q3_peak_by_hour_weekend_holiday`, local validation batch
-`phase3-final-local-seed`.
+First five rows queried from `dw.v_q3_peak_by_hour_weekend_holiday` on
+2026-11-23, using batch `095e328d2e34`:
 
 | local_hour | is_weekend | is_holiday | avg_demand_mwh | max_demand_mwh |
 |---:|:---:|:---:|---:|---:|
@@ -161,23 +161,22 @@ first rows from `dw.v_q3_peak_by_hour_weekend_holiday`, local validation batch
 - Keys: `(datetime_id, city_id)` identifies a city temperature fact; `datetime_id` aligns that city temperature with the corresponding hourly demand.
 - JOIN justification: The two fact tables share the required hourly grain, and the city dimension supplies the city display name. The view groups on city and ranks absolute Pearson correlation.
 
-**CREATED AS FALLBACK for Hisham (real output requested by Fatma's F11b):**
-first rows from `dw.v_q3_city_temp_demand_corr`, local validation batch
-`phase3-final-local-seed`.
+First five rows queried from `dw.v_q3_city_temp_demand_corr` on
+2026-11-23, using batch `095e328d2e34`:
 
 | city_id | city_name | temperature_demand_corr | correlation_rank |
 |---:|---|---:|---:|
-| 7 | Fresno | 0.6678662203009746 | 1 |
-| 2 | Riverside | 0.6438574194140797 | 2 |
-| 6 | Sacramento | 0.6410168506026077 | 3 |
-| 1 | Los Angeles | 0.6147983765193056 | 4 |
-| 3 | San Diego | 0.5899700863232336 | 5 |
+| 7 | Fresno | 0.6678662203009749 | 1 |
+| 2 | Riverside | 0.643857419414078 | 2 |
+| 6 | Sacramento | 0.6410168506026083 | 3 |
+| 1 | Los Angeles | 0.6147983765193059 | 4 |
+| 3 | San Diego | 0.5899700863232348 | 5 |
 
 ### Cleaning decisions
 
 The profiling values below are from profiled batch `48e7a1d23f5a`, as recorded in
 [`phase2_profiling_details.md`](./phase2_profiling_details.md) (§§3.1–3.5).
-The local validation clean run used batch `phase3-final-local-seed`.
+The current local clean run used batch `095e328d2e34`.
 
 | Issue found in profiling | Decision | Before → after |
 |---|---|---|
@@ -194,17 +193,15 @@ The local validation clean run used batch `phase3-final-local-seed`.
 
 #### Before/after row counts
 
-**CREATED AS FALLBACK for Hisham:** These observed counts are from local
-validation batch `phase3-final-local-seed`, loaded from an existing CSV rather than
-a new Kaggle ingestion run.
+These observed counts are from the 2026-11-23 local run of batch
+`095e328d2e34`, loaded from an existing CSV rather than a new Kaggle ingestion
+run.
 
 | Measure | Before cleaning (raw batch) | After cleaning | Difference |
 |---|---:|---:|---:|
 | Rows | 98,968 | 98,968 | 0 |
 
 ## Q1 views and JOIN justification
-
-**CREATED AS FALLBACK for Hisham; Q1 view documentation requested by Zeyad.**
 
 - `dw.v_q1_demand_by_temp_bin` joins `dw.fact_demand` to
   `dw.fact_weather_weighted` on `datetime_id`, then joins
@@ -217,19 +214,19 @@ a new Kaggle ingestion run.
   temperature bound, and uses `LAG(avg_demand_mwh)` to report the previous
   bin's average and the change from that average. This makes temperature
   intervals where demand begins increasing visible.
-- The views were queried against the 98,968-row local validation batch
-  `phase3-final-local-seed`, loaded from an existing CSV; this was not a new Kaggle
+- The views below were queried on 2026-11-23 against the 98,968-row batch
+  `095e328d2e34`, loaded from an existing CSV; this was not a new Kaggle
   ingestion run.
 
 First rows from `dw.v_q1_demand_by_temp_bin`:
 
 | temp_bin_c | hours_count | avg_demand_mwh | stddev_demand_mwh |
 |---:|---:|---:|---:|
-| 2 | 131 | 22849.833522448625 | 1809.527824625498 |
+| 2 | 131 | 22849.833522448625 | 1809.5278246254981626941624 |
 | 4 | 705 | 22701.634042553191 | 1780.560597683010 |
-| 6 | 2296 | 22425.476490671032 | 2137.260735643377 |
-| 8 | 4818 | 22646.941021397257 | 2599.571797385675 |
-| 10 | 7708 | 22942.650016488034 | 2808.615501397326 |
+| 6 | 2296 | 22425.476490671032 | 2137.260735643377172516691471 |
+| 8 | 4818 | 22646.941021397257 | 2599.571797385674723181771363 |
+| 10 | 7708 | 22942.650016488034 | 2808.615501397326479768884692 |
 
 First rows from `dw.v_q1_demand_slope`:
 
@@ -261,8 +258,8 @@ temperature estimate.
   seasons derived from local month (winter Dec–Feb, spring Mar–May, summer
   Jun–Aug, fall Sep–Nov).
 
-**CREATED AS FALLBACK for Hisham:** real first rows from both Q2 views,
-local validation batch `phase3-final-local-seed`.
+The following are real query results from both Q2 views on 2026-11-23, using
+batch `095e328d2e34`.
 
 | year | season | local_hour | avg_demand_mwh | avg_shortwave_radiation_pop_wt_wm2 | avg_cloud_cover_pop_wt_pct |
 |---:|---|---:|---:|---:|---:|
@@ -295,9 +292,9 @@ Rerun the views with:
 ### Low reported-demand observation
 
 The profiled minimum is 14 MWh versus 14,372 MWh for the other demand fields
-(`phase2_profiling_details.md`, §3.5). The real affected timestamps and
-associated values were queried from clean staging for local validation batch
-`phase3-final-local-seed`. The observation is retained, not filtered:
+(`phase2_profiling_details.md`, §3.5). The affected timestamp and associated
+values below were queried from clean staging for batch `095e328d2e34` on
+2026-11-23. The observation is retained, not filtered:
 
 | datetime_utc | demand_reported_mwh | demand_mwh | demand_imputed_pudl_mwh | demand_source | demand_imputed_pudl_mwh_imputation_code |
 |---|---:|---:|---:|---|---|
