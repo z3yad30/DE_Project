@@ -1,8 +1,8 @@
 # California Electricity Demand and Weather Analytics
 
-This project downloads the CAISO hourly demand and population-weighted weather dataset from Kaggle, preserves the original CSV in `data/raw/`, and loads its source fields into a PostgreSQL raw layer with batch-level ingestion records. Phases 1 and 2 are complete; Phase 3, including data-quality checks, is in progress; Phases 4–6 have not started.
+This project downloads the CAISO hourly demand and population-weighted weather dataset from Kaggle, preserves the original CSV in `data/raw/`, and loads its source fields into a PostgreSQL raw layer with batch-level ingestion records. Phases 1–3 are complete; the data-quality deliverables listed as Phase 4 in the roadmap were implemented with Phase 3 to match the supplied Phase 3 brief. Phases 5–6 have not started.
 
-**Project status:** Phase 1 — Done; Phase 2 — Done (verified by running the ingestion and SQL proof/profile scripts); Phase 3 — In progress (19 pre-load and 34 post-load checks pass on the stored 98,968-row batch; a live Kaggle-to-clean run remains unverified); Phases 4–6 — Not started.
+**Project status:** Phase 1 — Done; Phase 2 — Done (verified by running the ingestion and SQL proof/profile scripts); Phase 3 — Done (cleaning, star schema, all six SQL views, 19 pre-load checks, 34 post-load checks, and both failure demos verified on the existing 98,968-row batch; no fresh Kaggle download was performed during this verification); Phase 4 data quality — Done alongside Phase 3; Phases 5–6 — Not started.
 
 ## Table of contents
 
@@ -10,6 +10,7 @@ This project downloads the CAISO hourly demand and population-weighted weather d
 - [Dataset](#dataset)
 - [Analytical questions](#analytical-questions)
 - [Architecture](#architecture)
+- [Project guide](#project-guide)
 - [Prerequisites and Quick Start](#prerequisites-and-quick-start)
 - [Command reference](#command-reference)
 - [What is in this repository](#what-is-in-this-repository)
@@ -78,7 +79,12 @@ The image below shows the current Phase 2 implementation. Its future-phases pane
 
 ![Current Phase 2 architecture](docs/architecture_phase2.png)
 
-**Phase 3 cleaning pipeline (implemented; live Kaggle-to-clean validation remains):**
+## Project guide
+
+For the detailed service-by-service ingestion and cleaning flows, schema
+overview, and file-by-file inventory, see the [Project Guide](PROJECT_GUIDE.md).
+
+**Phase 3 cleaning pipeline (verified on the existing successful 98,968-row raw batch; a fresh Kaggle download was not re-tested):**
 
 ```text
 [Successful raw batch] -> [Python cleaning + pre-load checks] -> [clean_data staging]
@@ -484,8 +490,8 @@ See the [Phase 2 notes](docs/phase2_notes.md) for the findings summary and [deta
 |-------|-------|--------|
 | 1 | Proposal, dataset choice, Docker + PostgreSQL + pgAdmin | Done |
 | 2 | Ingestion and raw storage | Done |
-| 3 | Cleaning, star schema, SQL views | In progress; live Kaggle-to-clean validation remains |
-| 4 | Data quality checks | Done; 19 pre-load and 34 post-load checks passed on the local validation batch |
+| 3 | Cleaning, star schema, SQL views | Done; pipeline, all six views, 19 pre-load and 34 post-load checks, and pass/fail demos verified on the existing 98,968-row batch |
+| 4 | Data quality checks | Done; delivered alongside Phase 3 per the supplied Phase 3 brief |
 | 5 | Kestra orchestration, idempotency | Not started |
 | 6 | Dashboard, documentation, demo | Not started |
 

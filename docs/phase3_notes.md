@@ -1,3 +1,115 @@
+# Phase 3: Data Cleaning, Relational Modeling, SQL Analytics, and Data Quality
+
+## Phase scope, deliverables, and status
+
+Phase 3 combines cleaning, relational modeling, analytical SQL, and automated
+data quality. Although the repository roadmap labels data quality as Phase 4,
+the supplied Phase 3 brief explicitly includes pre-load and post-load checks in
+this phase.
+
+| Brief requirement | Implementation and evidence |
+|---|---|
+| Clean typed data without changing raw data; handle missing values and duplicates; validate required columns and row counts before loading. | `scripts/clean.py` reads one successful raw batch, converts values to typed columns, preserves missing values, removes exact duplicate rows, and rejects conflicting UTC timestamps. `scripts/preload_checks.py` checks the staging columns, data types, and raw-to-clean row count before writing. Raw rows remain in `raw_data`. |
+| Design relational tables with keys and constraints, and load reproducibly. | `sql/04_schema_dw.sql` defines the warehouse dimensions and facts; `sql/05_load_dw.sql` fully refreshes them in a deterministic order using UTC timestamps as the stable source key. The grain and key rationale are documented below and in `docs/er_diagram.md`. |
+| Use JOINs and analytical views to address project questions. | `sql/06_views_q1.sql`, `sql/07_views_q2.sql`, and `sql/08_views_q3.sql` create six views for the three questions. JOIN keys and reasons are documented in the Q1–Q3 sections below. |
+| Run post-load SQL checks and stop on failure. | `scripts/preload_checks.py` defines 19 pre-load checks; `sql/quality_checks.sql` supplies 34 post-load checks to `scripts/run_quality.py`. `scripts/run_pipeline.py` runs them after the warehouse load in the same transaction, rolls back on an exception, skips later stages, and exits nonzero. |
+| Demonstrate passing and failing quality cases and document rules, counts, schema, and behavior. | `DATA_QUALITY.md`, `docs/lab_demo_checklist_phase3.md`, `docs/evidence/quality_pass.txt`, and the four `docs/evidence/quality_fail_*.txt` files document the rules and captured outcomes. The pre-load demo is `scripts/demo_preload_fail.py`; the isolated post-load demo is `scripts/demo_quality_fail.py`. |
+
+### Phase execution flow
+
+```text
+Kaggle
+  -> scripts/extract.py
+  -> timestamped original CSV in data/raw/
+  -> scripts/ingest.py + scripts/load_raw.py
+  -> raw_data.raw_caiso_hourly + raw_data.ingestion_log
+  -> scripts/run_pipeline.py
+       -> scripts/clean.py: select a successful non-empty batch, type and clean it
+       -> scripts/preload_checks.py: validate before any clean/warehouse write
+       -> clean_data.stg_caiso_clean
+       -> sql/04_schema_dw.sql + sql/05_load_dw.sql
+       -> scripts/run_quality.py + sql/quality_checks.sql
+       -> commit only after every check passes; otherwise rollback
+  -> sql/06_views_q1.sql, sql/07_views_q2.sql, sql/08_views_q3.sql
+  -> analytical query results
+```
+
+In Compose, `ingest` and `clean` are separate on-demand services. `ingest`
+downloads and appends a raw batch; `clean` runs the transactional cleaning and
+warehouse pipeline against the latest successful raw batch. Cleaning does not
+download data and does not use ingestion's SHA-256 skip behavior. The full
+file-by-file guide, including Compose and SQL entry points, is in
+[`PROJECT_GUIDE.md`](../PROJECT_GUIDE.md).
+
+### Cleaning behavior and validation boundary
+
+- The raw schema stores all 35 source columns as `TEXT`; cleaning never updates
+  or deletes those source values.
+- Empty strings are normalized to missing values. UTC and local timestamps,
+  numeric values, local calendar integers, and strict `True`/`False` fields
+  are parsed into typed values. The local timestamp is converted to
+  `America/Los_Angeles` wall-clock time and checked against the source local
+  hour and the expected UTC offset.
+- Existing NULLs are preserved; the pipeline does not invent replacement
+  demand or weather values. Null-share thresholds are enforced by the
+  pre-load and post-load checks.
+- Exact duplicate rows are removed. A repeated UTC timestamp with conflicting
+  content is rejected; it is not silently resolved by choosing one row.
+- Unparseable values, invalid booleans, invalid required demand, and invalid
+  timestamp relationships raise errors or fail pre-load checks. The current
+  implementation rejects these cases rather than applying a guessed repair.
+  Since the brief says to "fix invalid values," this is a requirement to
+  clarify: either document rejection as the chosen safe handling for invalid
+  values or add and test field-specific repair rules before claiming automatic
+  correction is implemented.
+- For the documented local validation batch `phase3-final-local-seed`, the
+  input and cleaned counts were both 98,968; zero exact duplicate rows were
+  removed. This batch came from an existing CSV, not a new Kaggle download.
+
+### Checks and evidence boundaries
+
+- Pre-load checks cover required columns, expected dtypes, row-count equality,
+  UTC timestamp presence and uniqueness, positive demand, null-share
+  thresholds, and calendar/weather ranges (19 checks total). They run before
+  staging is written.
+- Post-load checks cover primary-key uniqueness, foreign-key integrity, null
+  thresholds, numeric/calendar ranges, presence of the source batch, raw to
+  clean and warehouse count reconciliation, seven cities, and seven
+  city-temperature rows per clean hour (34 checks total).
+- A pre-load injected negative demand is exercised in memory, before staging.
+  Post-load failure cases corrupt only `dw_test`, an unconstrained copy, so the
+  real `dw` tables are not modified.
+- The stored quality evidence demonstrates the check runner on an isolated
+  two-row warehouse fixture. It demonstrates pass/fail behavior, but by itself
+  is not proof that those captured runs used all 98,968 project rows.
+- On 2026-11-23, `docker compose run --rm clean` completed successfully against
+  the existing raw batch `095e328d2e34`: 98,968 rows before and after cleaning,
+  19 pre-load checks passed, 34 post-load checks passed, and the warehouse
+  contained 98,968 datetime, demand, and weighted-weather rows plus 692,776
+  city-temperature rows. All three view scripts were applied; their six views
+  returned rows (21, 21, 1,128, 47, 96, and 7 respectively).
+- In the same verification, pre-load and post-load negative-demand demos each
+  detected the injected value and exited with code 1. The post-load demo
+  removed `dw_test`; a follow-up run confirmed the production warehouse still
+  passed all 34 checks and retained the expected row counts.
+- This verifies the cleaning, warehouse, views, and quality stages using an
+  already-ingested local batch. No new Kaggle request or fresh extract/ingest
+  was performed; use the stored raw batch for the offline lab demo.
+
+### Lab/demo readiness
+
+The brief calls for a live pipeline run, database inspection, analytical-view
+queries, a passing quality run, and an intentional failing-data demonstration.
+The Phase 3 checklist in `docs/lab_demo_checklist_phase3.md` contains commands
+and expected results for these steps. Because the evaluation is offline, have a
+successful raw batch already in PostgreSQL and confirm that the Compose images
+and database are available before the session; do not make a new Kaggle
+download a prerequisite for demonstrating cleaning. Show raw/clean/warehouse
+counts and PK/FK relationships in `psql` or pgAdmin, apply and query all three
+view scripts, run the clean pipeline, then demonstrate pre-load and post-load
+failures. Push the scripts, SQL, Compose configuration, and notes before the
+evaluation, as required by the brief.
+
 ## Schema: Basel
 
 ### Schema justification
